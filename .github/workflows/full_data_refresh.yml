@@ -26,9 +26,7 @@ jobs:
 
       - name: Esecuzione script di refresh completo
         env:
+          # Passiamo l'intero JSON come una singola variabile d'ambiente
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
           EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
-          CLOUDFLARE_BUCKET_NAME: ${{ secrets.CLOUDFLARE_BUCKET_NAME }}
-          CLOUDFLARE_ENDPOINT_URL: ${{ secrets.CLOUDFLARE_ENDPOINT_URL }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: python run_full_refresh.py
