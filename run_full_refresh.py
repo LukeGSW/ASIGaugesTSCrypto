@@ -2,10 +2,11 @@
 # Eseguito manualmente per ricaricare da zero l'intera base dati storica su Google Drive.
 
 import os
+import io
 import pandas as pd
 import requests
 import time
-from typing import List, Dict, Optional
+from typing import List, Optional
 
 # Importiamo il nostro nuovo modulo di servizio per Google Drive
 from src.gdrive_service import get_gdrive_service, find_id, upload_or_update_parquet
@@ -13,7 +14,7 @@ from src.gdrive_service import get_gdrive_service, find_id, upload_or_update_par
 # --- CONFIGURAZIONE ---
 EODHD_API_KEY = os.getenv("EODHD_API_KEY")
 GDRIVE_SA_KEY = os.getenv("GDRIVE_SA_KEY")
-CRYPTO_EXCHANGE_CODE = "CC" # Codice per crypto, es. CryptoCompare
+CRYPTO_EXCHANGE_CODE = "CC" 
 ROOT_FOLDER_NAME = "KriterionQuant_Data"
 RAW_HISTORY_FOLDER_NAME = "raw-history"
 
@@ -27,13 +28,20 @@ def get_all_tickers(api_key: str, exchange_code: str) -> List[str]:
         r = requests.get(url, timeout=60)
         r.raise_for_status()
         data = r.json()
-        # Filtriamo per assicurarci di prendere solo i ticker desiderati
+        
+        # --- MODIFICA CHIAVE QUI ---
+        # Filtriamo per i ticker che terminano in "-USD" invece che per il "Tipo".
+        # Questo è un criterio molto più affidabile per le coppie crypto.
         tickers = [
             item['Code'] + '.' + exchange_code 
             for item in data 
-            if item.get('Type') in ['Common Stock', 'CRYPTO'] # 'Common Stock' è usato anche per le crypto
+            if item.get('Code', '').endswith('-USD')
         ]
-        print(f"Trovati {len(tickers)} tickers.")
+        
+        if not tickers:
+             raise ValueError("La lista ticker restituita da EODHD è vuota dopo il filtro. Controllare l'API o il filtro.")
+
+        print(f"Trovati {len(tickers)} tickers che terminano in -USD.")
         return tickers
     except Exception as e:
         print(f"ERRORE CRITICO: Impossibile recuperare la lista dei ticker. {e}")
@@ -53,18 +61,16 @@ def fetch_full_history_for_ticker(ticker: str, api_key: str) -> Optional[pd.Data
         print(f"  - ERRORE API durante il download di {ticker}: {e}")
         return None
 
-# --- BLOCCO DI ESECUZIONE PRINCIPALE ---
-
+# Il resto del file (blocco di esecuzione principale) rimane identico...
+# ...
 if __name__ == "__main__":
     print(">>> Inizio processo di REFRESH COMPLETO dei dati storici su Google Drive...")
     
     if not all([EODHD_API_KEY, GDRIVE_SA_KEY]):
         raise ValueError("Errore: mancano le variabili d'ambiente EODHD_API_KEY o GDRIVE_SA_KEY.")
 
-    # 1. Autenticazione e setup dei servizi
     gdrive_service = get_gdrive_service(GDRIVE_SA_KEY)
     
-    # 2. Trova le cartelle necessarie su Google Drive
     print("Ricerca cartelle su Google Drive...")
     root_folder_id = find_id(gdrive_service, name=ROOT_FOLDER_NAME, mime_type='application/vnd.google-apps.folder')
     if not root_folder_id:
@@ -75,11 +81,9 @@ if __name__ == "__main__":
         raise FileNotFoundError(f"La sottocartella '{RAW_HISTORY_FOLDER_NAME}' non è stata trovata.")
     print("Cartelle trovate con successo.")
 
-    # 3. Ottieni la lista completa dei ticker da processare
     all_tickers = get_all_tickers(EODHD_API_KEY, CRYPTO_EXCHANGE_CODE)
     total_tickers = len(all_tickers)
     
-    # 4. Itera, scarica e salva ogni ticker su Google Drive
     print(f"\nInizio download e salvataggio di {total_tickers} file storici...")
     for i, ticker in enumerate(all_tickers):
         print(f"Processo {i+1}/{total_tickers}: {ticker}")
@@ -87,13 +91,11 @@ if __name__ == "__main__":
         history_df = fetch_full_history_for_ticker(ticker, EODHD_API_KEY)
         
         if history_df is not None and not history_df.empty:
-            # Salva il file .parquet nella cartella `raw-history/` su Drive
             file_name = f"{ticker}.parquet"
             upload_or_update_parquet(gdrive_service, history_df, file_name, raw_history_folder_id)
         else:
             print(f"  - Dati non disponibili o vuoti per {ticker}. Salto.")
         
-        # Pausa per rispettare i limiti dell'API
         time.sleep(0.2) 
 
     print("\n>>> Processo di REFRESH COMPLETO terminato.")
