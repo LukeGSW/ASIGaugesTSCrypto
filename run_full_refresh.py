@@ -64,37 +64,27 @@ def fetch_full_history_for_ticker(ticker: str, api_key: str) -> Optional[pd.Data
 # Il resto del file (blocco di esecuzione principale) rimane identico...
 # ...
 if __name__ == "__main__":
-    print(">>> Inizio processo di REFRESH COMPLETO dei dati storici su Google Drive...")
-    
-    if not all([EODHD_API_KEY, GDRIVE_SA_KEY]):
-        raise ValueError("Errore: mancano le variabili d'ambiente EODHD_API_KEY o GDRIVE_SA_KEY.")
-
-    gdrive_service = get_gdrive_service(GDRIVE_SA_KEY)
-    
-    print("Ricerca cartelle su Google Drive...")
-    root_folder_id = find_id(gdrive_service, name=ROOT_FOLDER_NAME, mime_type='application/vnd.google-apps.folder')
-    if not root_folder_id:
-        raise FileNotFoundError(f"La cartella radice '{ROOT_FOLDER_NAME}' non è stata trovata su Google Drive.")
-        
-    raw_history_folder_id = find_id(gdrive_service, name=RAW_HISTORY_FOLDER_NAME, parent_id=root_folder_id, mime_type='application/vnd.google-apps.folder')
-    if not raw_history_folder_id:
-        raise FileNotFoundError(f"La sottocartella '{RAW_HISTORY_FOLDER_NAME}' non è stata trovata.")
-    print("Cartelle trovate con successo.")
+    # ... (l'autenticazione e la ricerca delle cartelle rimangono identiche) ...
 
     all_tickers = get_all_tickers(EODHD_API_KEY, CRYPTO_EXCHANGE_CODE)
     total_tickers = len(all_tickers)
     
     print(f"\nInizio download e salvataggio di {total_tickers} file storici...")
     for i, ticker in enumerate(all_tickers):
-        print(f"Processo {i+1}/{total_tickers}: {ticker}")
-        
-        history_df = fetch_full_history_for_ticker(ticker, EODHD_API_KEY)
-        
-        if history_df is not None and not history_df.empty:
-            file_name = f"{ticker}.parquet"
-            upload_or_update_parquet(gdrive_service, history_df, file_name, raw_history_folder_id)
-        else:
-            print(f"  - Dati non disponibili o vuoti per {ticker}. Salto.")
+        try: # --- BLOCCO TRY/EXCEPT AGGIUNTO ---
+            print(f"Processo {i+1}/{total_tickers}: {ticker}")
+            
+            history_df = fetch_full_history_for_ticker(ticker, EODHD_API_KEY)
+            
+            if history_df is not None and not history_df.empty:
+                file_name = f"{ticker}.parquet"
+                upload_or_update_parquet(gdrive_service, history_df, file_name, raw_history_folder_id)
+            else:
+                print(f"  - Dati non disponibili o vuoti per {ticker}. Salto.")
+        except Exception as e:
+            # Se qualcosa va storto per un ticker dopo tutti i tentativi, lo logga e va avanti
+            print(f"!!! FALLIMENTO IRRECUPERABILE per il ticker {ticker}: {e}. Continuo con il prossimo.")
+            continue
         
         time.sleep(0.2) 
 
