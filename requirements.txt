@@ -1,10 +1,18 @@
 # requirements.txt
 
+# Core per la dashboard web
 streamlit
+
+# Manipolazione e analisi dati
 pandas
 numpy
+
+# Grafici
 plotly
+
+# Per interagire con l'API di EODHD
 requests
+
 # Librerie per l'API di Google Drive
 google-api-python-client
 google-auth-httplib2
