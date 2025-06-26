@@ -1,12 +1,9 @@
 # run_daily_update.py
-# Eseguito quotidianamente per aggiornare l'ASI usando Google Drive come storage.
 
 import os
 import pandas as pd
-
-# Importiamo i nostri moduli di servizio e di calcolo
 from src.gdrive_service import get_gdrive_service, find_id, upload_or_update_parquet, download_all_parquets_in_folder
-import src.data_processing as dp 
+import src.data_processing as dp
 
 # --- CONFIGURAZIONE ---
 EODHD_API_KEY = os.getenv("EODHD_API_KEY")
@@ -17,48 +14,47 @@ PRODUCTION_FOLDER_NAME = "production"
 PRODUCTION_FILE_NAME = "altcoin_season_index.parquet"
 
 # --- BLOCCO DI ESECUZIONE PRINCIPALE ---
-
 if __name__ == "__main__":
     print(">>> Inizio processo di aggiornamento quotidiano dell'ASI (Google Drive)...")
 
     if not all([EODHD_API_KEY, GDRIVE_SA_KEY]):
         raise ValueError("Errore: una o più variabili d'ambiente necessarie non sono state impostate.")
 
-    # 1. Autenticazione e ricerca cartelle
     gdrive_service = get_gdrive_service(GDRIVE_SA_KEY)
     
-    root_folder_id = find_id(gdrive_service, name=ROOT_FOLDER_NAME, mime_type='application/vnd.google-apps.folder')
-    if not root_folder_id: raise FileNotFoundError(f"'{ROOT_FOLDER_NAME}' non trovata.")
-        
-    raw_history_folder_id = find_id(gdrive_service, name=RAW_HISTORY_FOLDER_NAME, parent_id=root_folder_id, mime_type='application/vnd.google-apps.folder')
-    if not raw_history_folder_id: raise FileNotFoundError(f"'{RAW_HISTORY_FOLDER_NAME}' non trovata.")
-        
-    production_folder_id = find_id(gdrive_service, name=PRODUCTION_FOLDER_NAME, parent_id=root_folder_id, mime_type='application/vnd.google-apps.folder')
-    if not production_folder_id: raise FileNotFoundError(f"'{PRODUCTION_FOLDER_NAME}' non trovata.")
-    print("Cartelle su Google Drive trovate con successo.")
-
     try:
-        # 2. Carica la base dati storica completa da Google Drive
+        print("Ricerca cartelle su Google Drive...")
+        root_folder_id = find_id(gdrive_service, name=ROOT_FOLDER_NAME, mime_type='application/vnd.google-apps.folder')
+        if not root_folder_id: raise FileNotFoundError(f"'{ROOT_FOLDER_NAME}' non trovata.")
+            
+        raw_history_folder_id = find_id(gdrive_service, name=RAW_HISTORY_FOLDER_NAME, parent_id=root_folder_id, mime_type='application/vnd.google-apps.folder')
+        if not raw_history_folder_id: raise FileNotFoundError(f"'{RAW_HISTORY_FOLDER_NAME}' non trovata.")
+            
+        production_folder_id = find_id(gdrive_service, name=PRODUCTION_FOLDER_NAME, parent_id=root_folder_id, mime_type='application/vnd.google-apps.folder')
+        if not production_folder_id: raise FileNotFoundError(f"'{PRODUCTION_FOLDER_NAME}' non trovata.")
+        print("Cartelle trovate con successo.")
+
+        # 1. Carica la base dati storica completa da Google Drive
         raw_history_df = download_all_parquets_in_folder(gdrive_service, raw_history_folder_id)
         print(f"Caricati {len(raw_history_df)} record storici da {raw_history_df['ticker'].nunique()} tickers.")
         
-        # 3. Scarica il "delta" incrementale dall'API di EODHD
+        # 2. Scarica il "delta" incrementale dall'API di EODHD
         tickers_list = raw_history_df['ticker'].unique().tolist()
         daily_delta_df = dp.fetch_daily_delta(tickers_list, EODHD_API_KEY)
         
-        if not daily_delta_df.empty:
+        # 3. Unisci i dati storici con il delta
+        if daily_delta_df is not None and not daily_delta_df.empty:
             print(f"Scaricati {len(daily_delta_df)} record di aggiornamento dall'API.")
-            # 4. Unisci i dati storici con il delta - ECCO LA CORREZIONE
             updated_history_df = pd.concat(
                 [raw_history_df, daily_delta_df], 
-                ignore_index=True  # Aggiunto questo parametro fondamentale
+                ignore_index=True
             ).drop_duplicates(subset=['date', 'ticker'], keep='last').sort_values('date')
             print("Dati storici aggiornati in memoria.")
         else:
             print("Nessun nuovo dato dall'API, procedo con i dati esistenti.")
             updated_history_df = raw_history_df
 
-        # 5. Esegui la logica di calcolo principale
+        # 4. Esegui la logica di calcolo principale
         print("Inizio generazione panieri dinamici...")
         dynamic_baskets = dp.create_dynamic_baskets(updated_history_df)
         print(f"Generati {len(dynamic_baskets)} panieri.")
@@ -67,7 +63,7 @@ if __name__ == "__main__":
         final_asi_df = dp.calculate_full_asi(updated_history_df, dynamic_baskets)
         print("Calcolo ASI completato.")
 
-        # 6. Carica il file di produzione aggiornato su Google Drive
+        # 5. Carica il file di produzione aggiornato su Google Drive
         upload_or_update_parquet(gdrive_service, final_asi_df, PRODUCTION_FILE_NAME, production_folder_id)
 
         print("\n>>> Processo di aggiornamento quotidiano completato con successo.")
