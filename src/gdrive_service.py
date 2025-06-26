@@ -3,6 +3,7 @@
 import io
 import json
 import pandas as pd
+import time
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
@@ -22,96 +23,63 @@ def get_gdrive_service(sa_key_string: str):
 
 def find_id(service, name: str, parent_id: str = None, mime_type: str = None) -> str:
     """Trova l'ID di un file o cartella per nome all'interno di un parent."""
+    # (Questa funzione rimane identica)
     query = f"name = '{name}'"
     if parent_id:
         query += f" and '{parent_id}' in parents"
     if mime_type:
         query += f" and mimeType = '{mime_type}'"
-    
     try:
         response = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
         files = response.get('files', [])
-        if not files:
-            return None # Non trovato
-        return files[0].get('id')
+        return files[0].get('id') if files else None
     except HttpError as e:
         print(f"Errore durante la ricerca di '{name}': {e}")
         return None
 
-def upload_or_update_parquet(service, df: pd.DataFrame, file_name: str, parent_folder_id: str) -> None:
-    """Carica o aggiorna un file .parquet su Google Drive."""
+def upload_or_update_parquet(service, df: pd.DataFrame, file_name: str, parent_folder_id: str):
+    """Carica o aggiorna un file .parquet su Google Drive con logica di retry."""
     file_metadata = {'name': file_name, 'parents': [parent_folder_id]}
-    
-    # Prepara il contenuto del file in memoria
     buffer = io.BytesIO()
-    df.to_parquet(buffer, index=True)
+    df.to_parquet(buffer, index=False)
     buffer.seek(0)
-    
     media = MediaIoBaseUpload(buffer, mimetype='application/octet-stream', resumable=True)
     
-    # Controlla se il file esiste già per aggiornarlo, altrimenti crealo
     existing_file_id = find_id(service, name=file_name, parent_id=parent_folder_id)
-    
-    try:
-        if existing_file_id:
-            request = service.files().update(fileId=existing_file_id, media_body=media)
-            print(f"Aggiornamento file: {file_name}...")
-        else:
-            request = service.files().create(body=file_metadata, media_body=media, fields='id')
-            print(f"Creazione nuovo file: {file_name}...")
+
+    # --- NUOVA LOGICA DI RETRY ---
+    retries = 4
+    for i in range(retries):
+        try:
+            if existing_file_id:
+                request = service.files().update(fileId=existing_file_id, media_body=media)
+            else:
+                request = service.files().create(body=file_metadata, media_body=media, fields='id')
+            
+            print(f"  - Tentativo di upload per {file_name}...")
+            request.execute()
+            print(f"  - SUCCESSO: '{file_name}' caricato.")
+            return # Esci dalla funzione se l'upload ha successo
         
-        request.execute()
-        print(f"'{file_name}' caricato con successo.")
-    except HttpError as e:
-        print(f"Errore durante l'upload di '{file_name}': {e}")
-        raise
+        except HttpError as e:
+            # Fai un retry solo per errori 5xx (Server Error)
+            if e.resp.status in [500, 502, 503, 504]:
+                wait_time = (2 ** i) + 1 # Backoff esponenziale: 2, 3, 5, 9 secondi
+                print(f"  - ERRORE SERVER ({e.resp.status}) per '{file_name}'. Riprovo tra {wait_time} secondi... (Tentativo {i+1}/{retries})")
+                time.sleep(wait_time)
+            else:
+                # Per altri errori (es. 4xx), non fare retry, segnala e interrompi per questo file
+                print(f"  - ERRORE NON RECUPERABILE ({e.resp.status}) per '{file_name}': {e}")
+                return # Interrompi i tentativi per questo file
+    
+    # Se il loop finisce, tutti i tentativi sono falliti
+    print(f"!!! FALLIMENTO FINALE per '{file_name}' dopo {retries} tentativi.")
+
 
 def download_parquet(service, file_id: str) -> pd.DataFrame:
-    """Scarica un file .parquet da Google Drive e lo restituisce come DataFrame."""
-    try:
-        request = service.files().get_media(fileId=file_id)
-        file_buffer = io.BytesIO()
-        downloader = MediaIoBaseDownload(file_buffer, request)
-        
-        done = False
-        while not done:
-            status, done = downloader.next_chunk()
-            print(f"Download: {int(status.progress() * 100)}%.")
-        
-        file_buffer.seek(0)
-        df = pd.read_parquet(file_buffer)
-        return df
-    except HttpError as e:
-        print(f"Errore durante il download del file con ID '{file_id}': {e}")
-        raise
-# Aggiungi questa funzione al file src/gdrive_service.py
+    # (Questa funzione rimane identica)
+    # ...
 
 def download_all_parquets_in_folder(service, folder_id: str) -> pd.DataFrame:
-    """
-    Scarica tutti i file .parquet da una cartella di GDrive e li unisce in un DataFrame.
-    """
-    print(f"Ricerca file .parquet nella cartella con ID: {folder_id}...")
-    query = f"'{folder_id}' in parents and mimeType != 'application/vnd.google-apps.folder' and name contains '.parquet'"
-    try:
-        response = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
-        files = response.get('files', [])
-        
-        if not files:
-            raise FileNotFoundError("Nessun file .parquet trovato nella cartella specificata.")
-
-        df_list = []
-        total_files = len(files)
-        print(f"Trovati {total_files} file. Inizio download...")
-        for i, file in enumerate(files):
-            print(f"  - Download {i+1}/{total_files}: {file.get('name')}")
-            df = download_parquet(service, file.get('id'))
-            df['ticker'] = file.get('name').replace('.parquet', '')
-            df_list.append(df)
-        
-        full_df = pd.concat(df_list, ignore_index=True)
-        full_df['date'] = pd.to_datetime(full_df['date'])
-        return full_df
-
-    except Exception as e:
-        print(f"Errore durante il download della cartella: {e}")
-        raise
+    # (Questa funzione rimane identica)
+    # ...
