@@ -2,47 +2,45 @@
 
 import streamlit as st
 import pandas as pd
-import boto3
-from botocore.exceptions import NoCredentialsError, ClientError
+# Importiamo il nostro nuovo modulo di servizio
+from src.gdrive_service import get_gdrive_service, find_id, download_parquet
 
-# Usiamo il caching di Streamlit per scaricare il file una sola volta per sessione
 @st.cache_data(ttl=3600) # Cache per 1 ora
 def load_production_asi() -> pd.DataFrame:
     """
-    Scarica il file Parquet dell'ASI pre-calcolato dallo storage S3-compatible.
-    Legge le credenziali e le configurazioni dai secrets di Streamlit.
+    Scarica il file Parquet dell'ASI da Google Drive.
     """
     try:
-        # Recupera i secrets
-        endpoint_url = st.secrets["CLOUDFLARE_ENDPOINT_URL"]
-        bucket_name = st.secrets["CLOUDFLARE_BUCKET_NAME"]
-        access_key = st.secrets["AWS_ACCESS_KEY_ID"]
-        secret_key = st.secrets["AWS_SECRET_ACCESS_KEY"]
+        # Recupera la chiave del service account dai secrets di Streamlit
+        sa_key = st.secrets["GDRIVE_SA_KEY"]
         
-        # Nome del file di produzione
-        file_key = "production/altcoin_season_index.parquet"
+        # Autenticati al servizio
+        service = get_gdrive_service(sa_key)
 
-        # Connessione al client S3
-        s3_client = boto3.client(
-            's3',
-            endpoint_url=endpoint_url,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            region_name='auto' # Spesso 'auto' per Cloudflare R2
-        )
-
-        # Scarica l'oggetto in memoria
-        response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
+        # Trova gli ID necessari
+        # Assumiamo che la cartella radice sia condivisa con il service account
+        # e che il suo nome sia univoco. Per robustezza si potrebbe usare l'ID diretto.
+        root_folder_id = find_id(service, name="KriterionQuant_Data", mime_type='application/vnd.google-apps.folder')
+        if not root_folder_id:
+            st.error("Cartella radice 'KriterionQuant_Data' non trovata su Google Drive.")
+            return None
+            
+        prod_folder_id = find_id(service, name="production", parent_id=root_folder_id, mime_type='application/vnd.google-apps.folder')
+        if not prod_folder_id:
+            st.error("Cartella 'production' non trovata all'interno di 'KriterionQuant_Data'.")
+            return None
         
-        # Leggi il file parquet direttamente in un DataFrame pandas
-        asi_df = pd.read_parquet(response['Body'])
+        asi_file_id = find_id(service, name="altcoin_season_index.parquet", parent_id=prod_folder_id)
+        if not asi_file_id:
+            st.error("File 'altcoin_season_index.parquet' non trovato nella cartella 'production'.")
+            return None
         
-        return asi_df
+        # Scarica e restituisci il DataFrame
+        st.info("Caricamento dati di produzione in corso...")
+        df = download_parquet(service, asi_file_id)
+        st.success("Dati caricati con successo.")
+        return df
 
-    except (NoCredentialsError, ClientError, KeyError) as e:
-        st.error(f"Errore di connessione allo storage dei dati: {e}")
-        st.error("Assicurarsi che i secrets di Streamlit (CLOUDFLARE_*, AWS_*) siano configurati correttamente.")
-        return None
     except Exception as e:
-        st.error(f"Errore imprevisto durante il caricamento dei dati: {e}")
+        st.error(f"Errore imprevisto durante il caricamento dei dati da Google Drive: {e}")
         return None
