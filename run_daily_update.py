@@ -6,7 +6,7 @@ import pandas as pd
 
 # Importiamo i nostri moduli di servizio e di calcolo
 from src.gdrive_service import get_gdrive_service, find_id, upload_or_update_parquet, download_all_parquets_in_folder
-import src.data_processing as dp # Usiamo un alias per chiarezza
+import src.data_processing as dp 
 
 # --- CONFIGURAZIONE ---
 EODHD_API_KEY = os.getenv("EODHD_API_KEY")
@@ -22,7 +22,7 @@ if __name__ == "__main__":
     print(">>> Inizio processo di aggiornamento quotidiano dell'ASI (Google Drive)...")
 
     if not all([EODHD_API_KEY, GDRIVE_SA_KEY]):
-        raise ValueError("Errore: mancano le variabili d'ambiente EODHD_API_KEY o GDRIVE_SA_KEY.")
+        raise ValueError("Errore: una o più variabili d'ambiente necessarie non sono state impostate.")
 
     # 1. Autenticazione e ricerca cartelle
     gdrive_service = get_gdrive_service(GDRIVE_SA_KEY)
@@ -48,8 +48,11 @@ if __name__ == "__main__":
         
         if not daily_delta_df.empty:
             print(f"Scaricati {len(daily_delta_df)} record di aggiornamento dall'API.")
-            # 4. Unisci i dati storici con il delta
-            updated_history_df = pd.concat([raw_history_df, daily_delta_df]).drop_duplicates(subset=['date', 'ticker'], keep='last').sort_values('date')
+            # 4. Unisci i dati storici con il delta - ECCO LA CORREZIONE
+            updated_history_df = pd.concat(
+                [raw_history_df, daily_delta_df], 
+                ignore_index=True  # Aggiunto questo parametro fondamentale
+            ).drop_duplicates(subset=['date', 'ticker'], keep='last').sort_values('date')
             print("Dati storici aggiornati in memoria.")
         else:
             print("Nessun nuovo dato dall'API, procedo con i dati esistenti.")
