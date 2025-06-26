@@ -1,112 +1,74 @@
 # run_daily_update.py
-# Questo script viene eseguito quotidianamente da una GitHub Action.
+# Eseguito quotidianamente per aggiornare l'ASI usando Google Drive come storage.
 
 import os
-import io
 import pandas as pd
-import boto3
-import requests
-from botocore.exceptions import ClientError
 
-# Importiamo i moduli con la logica di business.
-# Supponiamo che questi moduli esistano come pianificato.
-import data_processing 
+# Importiamo i nostri moduli di servizio e di calcolo
+from src.gdrive_service import get_gdrive_service, find_id, upload_or_update_parquet, download_all_parquets_in_folder
+import src.data_processing as dp # Usiamo un alias per chiarezza
 
 # --- CONFIGURAZIONE ---
-# Leggiamo le configurazioni e i segreti dalle variabili d'ambiente
-# che verranno impostate dalla GitHub Action.
 EODHD_API_KEY = os.getenv("EODHD_API_KEY")
-BUCKET_NAME = os.getenv("CLOUDFLARE_BUCKET_NAME")
-ENDPOINT_URL = os.getenv("CLOUDFLARE_ENDPOINT_URL")
-ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
-SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-
-# Definiamo i percorsi nello storage
-RAW_HISTORY_PATH = "raw-history/"
-PRODUCTION_PATH = "production/altcoin_season_index.parquet"
-
-
-# --- FUNZIONI HELPER PER LO STORAGE ---
-
-def get_s3_client():
-    """Inizializza e restituisce un client S3."""
-    return boto3.client(
-        's3',
-        endpoint_url=ENDPOINT_URL,
-        aws_access_key_id=ACCESS_KEY,
-        aws_secret_access_key=SECRET_KEY,
-        region_name='auto'
-    )
-
-def load_raw_history_from_s3(s3_client, bucket, path):
-    """Carica tutti i file dalla cartella raw-history e li unisce in un DataFrame."""
-    # ... Logica per listare tutti i file in `path` e scaricarli ...
-    # ... Questa funzione sarà complessa, per ora la abbozziamo ...
-    print(f"Caricamento dati storici da s3://{bucket}/{path}...")
-    # In un'implementazione reale, questa funzione scaricherebbe e unirebbe
-    # tutti i file .parquet dei singoli ticker.
-    # Per ora, supponiamo che restituisca un DataFrame combinato.
-    # df_history = ...
-    # return df_history
-    pass # La implementeremo nel dettaglio dopo
-
-
-def upload_df_to_s3(s3_client, df, bucket, key):
-    """Carica un DataFrame pandas nello storage S3 come file Parquet."""
-    try:
-        out_buffer = io.BytesIO()
-        df.to_parquet(out_buffer, index=True)
-        out_buffer.seek(0)
-        s3_client.put_object(Bucket=bucket, Key=key, Body=out_buffer)
-        print(f"File caricato con successo in s3://{bucket}/{key}")
-    except ClientError as e:
-        print(f"Errore durante il caricamento su S3: {e}")
-        raise
+GDRIVE_SA_KEY = os.getenv("GDRIVE_SA_KEY")
+ROOT_FOLDER_NAME = "KriterionQuant_Data"
+RAW_HISTORY_FOLDER_NAME = "raw-history"
+PRODUCTION_FOLDER_NAME = "production"
+PRODUCTION_FILE_NAME = "altcoin_season_index.parquet"
 
 # --- BLOCCO DI ESECUZIONE PRINCIPALE ---
 
 if __name__ == "__main__":
-    print(">>> Inizio processo di aggiornamento quotidiano dell'ASI...")
+    print(">>> Inizio processo di aggiornamento quotidiano dell'ASI (Google Drive)...")
 
-    # Validazione della configurazione
-    if not all([EODHD_API_KEY, BUCKET_NAME, ENDPOINT_URL, ACCESS_KEY, SECRET_KEY]):
-        raise ValueError("Errore: una o più variabili d'ambiente necessarie non sono state impostate.")
+    if not all([EODHD_API_KEY, GDRIVE_SA_KEY]):
+        raise ValueError("Errore: mancano le variabili d'ambiente EODHD_API_KEY o GDRIVE_SA_KEY.")
 
-    s3 = get_s3_client()
+    # 1. Autenticazione e ricerca cartelle
+    gdrive_service = get_gdrive_service(GDRIVE_SA_KEY)
+    
+    root_folder_id = find_id(gdrive_service, name=ROOT_FOLDER_NAME, mime_type='application/vnd.google-apps.folder')
+    if not root_folder_id: raise FileNotFoundError(f"'{ROOT_FOLDER_NAME}' non trovata.")
+        
+    raw_history_folder_id = find_id(gdrive_service, name=RAW_HISTORY_FOLDER_NAME, parent_id=root_folder_id, mime_type='application/vnd.google-apps.folder')
+    if not raw_history_folder_id: raise FileNotFoundError(f"'{RAW_HISTORY_FOLDER_NAME}' non trovata.")
+        
+    production_folder_id = find_id(gdrive_service, name=PRODUCTION_FOLDER_NAME, parent_id=root_folder_id, mime_type='application/vnd.google-apps.folder')
+    if not production_folder_id: raise FileNotFoundError(f"'{PRODUCTION_FOLDER_NAME}' non trovata.")
+    print("Cartelle su Google Drive trovate con successo.")
 
     try:
-        # 1. Carica la base dati storica completa dallo storage
-        # Questa è la parte che evita di scaricare tutto ogni giorno.
-        # (La logica dettagliata sarà in data_processing.py)
-        raw_history_df = data_processing.load_full_history_from_storage(s3, BUCKET_NAME, RAW_HISTORY_PATH)
-        print(f"Caricati {len(raw_history_df)} record storici.")
+        # 2. Carica la base dati storica completa da Google Drive
+        raw_history_df = download_all_parquets_in_folder(gdrive_service, raw_history_folder_id)
+        print(f"Caricati {len(raw_history_df)} record storici da {raw_history_df['ticker'].nunique()} tickers.")
         
-        # 2. Scarica solo il "delta" incrementale dall'API
-        # (La logica dettagliata sarà in data_processing.py)
+        # 3. Scarica il "delta" incrementale dall'API di EODHD
         tickers_list = raw_history_df['ticker'].unique().tolist()
-        daily_delta_df = data_processing.fetch_daily_delta(tickers_list, EODHD_API_KEY)
-        print(f"Scaricati {len(daily_delta_df)} record di aggiornamento dall'API.")
+        daily_delta_df = dp.fetch_daily_delta(tickers_list, EODHD_API_KEY)
         
-        # 3. Unisci i dati storici con il delta
-        updated_history_df = pd.concat([raw_history_df, daily_delta_df]).drop_duplicates(subset=['date', 'ticker'], keep='last').sort_values('date')
-        print("Dati storici aggiornati in memoria.")
+        if not daily_delta_df.empty:
+            print(f"Scaricati {len(daily_delta_df)} record di aggiornamento dall'API.")
+            # 4. Unisci i dati storici con il delta
+            updated_history_df = pd.concat([raw_history_df, daily_delta_df]).drop_duplicates(subset=['date', 'ticker'], keep='last').sort_values('date')
+            print("Dati storici aggiornati in memoria.")
+        else:
+            print("Nessun nuovo dato dall'API, procedo con i dati esistenti.")
+            updated_history_df = raw_history_df
 
-        # 4. Esegui la logica di calcolo principale
-        # (Le funzioni sono definite in data_processing.py)
+        # 5. Esegui la logica di calcolo principale
         print("Inizio generazione panieri dinamici...")
-        dynamic_baskets = data_processing.create_dynamic_baskets(updated_history_df)
+        dynamic_baskets = dp.create_dynamic_baskets(updated_history_df)
         print(f"Generati {len(dynamic_baskets)} panieri.")
 
         print("Inizio calcolo Altcoin Season Index...")
-        final_asi_df = data_processing.calculate_full_asi(updated_history_df, dynamic_baskets)
+        final_asi_df = dp.calculate_full_asi(updated_history_df, dynamic_baskets)
         print("Calcolo ASI completato.")
 
-        # 5. Carica il file di produzione aggiornato nello storage
-        upload_df_to_s3(s3, final_asi_df, BUCKET_NAME, PRODUCTION_PATH)
+        # 6. Carica il file di produzione aggiornato su Google Drive
+        upload_or_update_parquet(gdrive_service, final_asi_df, PRODUCTION_FILE_NAME, production_folder_id)
 
-        print(">>> Processo di aggiornamento quotidiano completato con successo.")
+        print("\n>>> Processo di aggiornamento quotidiano completato con successo.")
 
     except Exception as e:
         print(f"!!! ERRORE CRITICO DURANTE L'ESECUZIONE: {e}")
-        # In un sistema di produzione, qui si potrebbe inviare una notifica di errore.
         raise
