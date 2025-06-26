@@ -84,3 +84,34 @@ def download_parquet(service, file_id: str) -> pd.DataFrame:
     except HttpError as e:
         print(f"Errore durante il download del file con ID '{file_id}': {e}")
         raise
+# Aggiungi questa funzione al file src/gdrive_service.py
+
+def download_all_parquets_in_folder(service, folder_id: str) -> pd.DataFrame:
+    """
+    Scarica tutti i file .parquet da una cartella di GDrive e li unisce in un DataFrame.
+    """
+    print(f"Ricerca file .parquet nella cartella con ID: {folder_id}...")
+    query = f"'{folder_id}' in parents and mimeType != 'application/vnd.google-apps.folder' and name contains '.parquet'"
+    try:
+        response = service.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+        files = response.get('files', [])
+        
+        if not files:
+            raise FileNotFoundError("Nessun file .parquet trovato nella cartella specificata.")
+
+        df_list = []
+        total_files = len(files)
+        print(f"Trovati {total_files} file. Inizio download...")
+        for i, file in enumerate(files):
+            print(f"  - Download {i+1}/{total_files}: {file.get('name')}")
+            df = download_parquet(service, file.get('id'))
+            df['ticker'] = file.get('name').replace('.parquet', '')
+            df_list.append(df)
+        
+        full_df = pd.concat(df_list, ignore_index=True)
+        full_df['date'] = pd.to_datetime(full_df['date'])
+        return full_df
+
+    except Exception as e:
+        print(f"Errore durante il download della cartella: {e}")
+        raise
