@@ -1,0 +1,34 @@
+# .github/workflows/full_data_refresh.yml
+
+name: Refresh Completo Dati Storici (Annuale/Manuale)
+
+on:
+  # Questo workflow si avvia SOLO manualmente.
+  workflow_dispatch:
+
+jobs:
+  build-and-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180 # Aumentiamo il timeout a 3 ore, perché questo job è lungo
+    steps:
+      - name: Checkout del codice
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Installazione dipendenze
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Esecuzione script di refresh completo
+        env:
+          EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
+          CLOUDFLARE_BUCKET_NAME: ${{ secrets.CLOUDFLARE_BUCKET_NAME }}
+          CLOUDFLARE_ENDPOINT_URL: ${{ secrets.CLOUDFLARE_ENDPOINT_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: python run_full_refresh.py
