@@ -1,4 +1,4 @@
-# run_daily_update.py
+# run_daily_update.py (VERSIONE DI DEBUG)
 
 import os
 import pandas as pd
@@ -36,25 +36,47 @@ if __name__ == "__main__":
 
         # 1. Carica la base dati storica completa da Google Drive
         raw_history_df = download_all_parquets_in_folder(gdrive_service, raw_history_folder_id)
-        print(f"Caricati {len(raw_history_df)} record storici da {raw_history_df['ticker'].nunique()} tickers.")
+        
+        # --- BLOCCO DI DEBUG #1: Analisi del primo DataFrame ---
+        print("\n--- DEBUG: Analisi di 'raw_history_df' ---")
+        print(f"Shape: {raw_history_df.shape}")
+        print(f"Indice è unico? {raw_history_df.index.is_unique}")
+        print(f"Numero di duplicati nell'indice: {raw_history_df.index.duplicated().sum()}")
+        print("Prime 5 righe dell'indice:", raw_history_df.index[:5])
+        print("--------------------------------------------\n")
         
         # 2. Scarica il "delta" incrementale dall'API di EODHD
         tickers_list = raw_history_df['ticker'].unique().tolist()
         daily_delta_df = dp.fetch_daily_delta(tickers_list, EODHD_API_KEY)
-        
-        # 3. Unisci i dati storici con il delta
+
         if daily_delta_df is not None and not daily_delta_df.empty:
-            print(f"Scaricati {len(daily_delta_df)} record di aggiornamento dall'API.")
-            updated_history_df = pd.concat(
-                [raw_history_df, daily_delta_df], 
-                ignore_index=True
-            ).drop_duplicates(subset=['date', 'ticker'], keep='last').sort_values('date')
-            print("Dati storici aggiornati in memoria.")
+            # --- BLOCCO DI DEBUG #2: Analisi del secondo DataFrame ---
+            print("\n--- DEBUG: Analisi di 'daily_delta_df' ---")
+            print(f"Shape: {daily_delta_df.shape}")
+            print(f"Indice è unico? {daily_delta_df.index.is_unique}")
+            print(f"Numero di duplicati nell'indice: {daily_delta_df.index.duplicated().sum()}")
+            print("Prime 5 righe dell'indice:", daily_delta_df.index[:5])
+            print("-------------------------------------------\n")
+
+            # 3. Unisci i dati
+            try:
+                print(">>> Tentativo di unire i dati con pd.concat(ignore_index=True)...")
+                updated_history_df = pd.concat(
+                    [raw_history_df, daily_delta_df], 
+                    ignore_index=True
+                ).drop_duplicates(subset=['date', 'ticker'], keep='last').sort_values('date')
+                print(">>> Unione dati completata con successo.")
+            except Exception as e:
+                print("\n!!! ERRORE INTERCETTATO DURANTE pd.concat !!!")
+                print(f"Tipo di errore: {type(e)}")
+                print(f"Messaggio di errore: {e}")
+                raise e # Rilanciamo l'errore per far fallire il job
         else:
             print("Nessun nuovo dato dall'API, procedo con i dati esistenti.")
             updated_history_df = raw_history_df
 
         # 4. Esegui la logica di calcolo principale
+        # ... (il resto dello script rimane invariato)
         print("Inizio generazione panieri dinamici...")
         dynamic_baskets = dp.create_dynamic_baskets(updated_history_df)
         print(f"Generati {len(dynamic_baskets)} panieri.")
@@ -63,7 +85,6 @@ if __name__ == "__main__":
         final_asi_df = dp.calculate_full_asi(updated_history_df, dynamic_baskets)
         print("Calcolo ASI completato.")
 
-        # 5. Carica il file di produzione aggiornato su Google Drive
         upload_or_update_parquet(gdrive_service, final_asi_df, PRODUCTION_FILE_NAME, production_folder_id)
 
         print("\n>>> Processo di aggiornamento quotidiano completato con successo.")
