@@ -3,6 +3,7 @@
 import pandas as pd
 import requests
 import numpy as np
+import time  # <-- ECCO LA RIGA MANCANTE
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
@@ -26,19 +27,25 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[pd.DataFrame
         except requests.exceptions.RequestException as e:
             print(f"Attenzione: Impossibile scaricare l'aggiornamento per {ticker}. Errore: {e}")
             continue
-        time.sleep(0.1) # Piccola pausa per cortesia verso l'API
+        # Pausa per non sovraccaricare l'API
+        time.sleep(0.1) 
 
     if not all_deltas:
         return None
         
     delta_df = pd.concat(all_deltas, ignore_index=True)
-    delta_df = delta_df.rename(columns={'adjusted_close': 'close'})
+    # Assicurati che le colonne corrispondano al formato storico
+    if 'adjusted_close' in delta_df.columns:
+        delta_df = delta_df.rename(columns={'adjusted_close': 'close'})
     delta_df['date'] = pd.to_datetime(delta_df['date'])
+    
     # Selezioniamo solo le colonne che ci servono per mantenere la coerenza
-    return delta_df[['date', 'close', 'volume', 'ticker']]
+    required_cols = ['date', 'close', 'volume', 'ticker']
+    return delta_df[[col for col in required_cols if col in delta_df.columns]]
 
+# Il resto del file (create_dynamic_baskets, calculate_full_asi) rimane identico
 def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int = 30, rebalancing_freq: str = '90D') -> Dict:
-    """Crea i panieri dinamici basati sul volume."""
+    # ... (logica invariata)
     if df.empty:
         return {}
         
@@ -63,7 +70,7 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
     return baskets
 
 def calculate_full_asi(df: pd.DataFrame, baskets: Dict, performance_window: int = 90) -> pd.DataFrame:
-    """Calcola l'Altcoin Season Index usando i panieri dinamici."""
+    # ... (logica invariata)
     df_with_dates = df.set_index('date')
     btc_ticker = next((t for t in df['ticker'].unique() if 'BTC' in t), None)
     if not btc_ticker: raise ValueError("Ticker di Bitcoin non trovato.")
@@ -76,7 +83,10 @@ def calculate_full_asi(df: pd.DataFrame, baskets: Dict, performance_window: int 
     
     asi_results = []
     
-    for eval_date in all_dates[all_dates > all_dates.min() + timedelta(days=performance_window)]:
+    # Inizia a calcolare solo dopo che ci sia abbastanza storia per la finestra di performance
+    start_eval_date = all_dates.min() + timedelta(days=performance_window)
+    
+    for eval_date in all_dates[all_dates >= start_eval_date]:
         active_basket_date = next((rd for rd in reversed(rebalancing_dates) if rd <= eval_date), None)
         if not active_basket_date: continue
             
@@ -87,7 +97,7 @@ def calculate_full_asi(df: pd.DataFrame, baskets: Dict, performance_window: int 
         try:
             current_alt_perf_series = alt_perf.loc[eval_date]
         except KeyError:
-            continue # No altcoin data for this date
+            continue
 
         outperforming_count = 0
         valid_alts_in_basket = 0
