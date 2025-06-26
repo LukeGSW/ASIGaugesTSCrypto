@@ -1,20 +1,11 @@
 # requirements.txt
 
-# Core per la dashboard web
 streamlit
-
-# Manipolazione e analisi dati
 pandas
 numpy
-
-# Grafici
 plotly
-
-# Per interagire con lo storage cloud S3-compatible (es. Cloudflare R2, AWS S3)
-boto3
-
-# Per interagire con l'API di EODHD nella pipeline
 requests
-
-# Potrebbe essere utile per il calcolo di alcuni indicatori
-# pandas-ta 
+# Librerie per l'API di Google Drive
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
