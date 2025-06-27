@@ -37,10 +37,23 @@ if __name__ == "__main__":
             print("Dati incrementali trovati. Eseguo unione nel dizionario...")
             for ticker, delta_df in daily_delta_dict.items():
                 if ticker in historical_data_dict:
-                    # --- QUESTA È LA CORREZIONE ---
-                    # Unisce i dati storici del ticker con il SUO delta specifico
-                    combined_df = pd.concat([historical_data_dict[ticker], delta_df])
-                    historical_data_dict[ticker] = combined_df[~combined_df.index.duplicated(keep='last')]
+                hist_df = historical_data_dict[ticker]
+                
+                # --- INIZIO DELLA CORREZIONE ---
+                # 1. Rimuovi dallo storico le righe le cui date sono presenti nel nuovo delta.
+                #    Questo previene l'errore di indice duplicato in pd.concat.
+                #    `errors='ignore'` è utile se una data del delta non fosse nello storico.
+                hist_df = hist_df.drop(delta_df.index, errors='ignore')
+                
+                # 2. Ora concatena in sicurezza, non ci sono più duplicati.
+                combined_df = pd.concat([hist_df, delta_df])
+                
+                # 3. Ordina l'indice per mantenere la cronologia corretta.
+                combined_df.sort_index(inplace=True)
+                
+                # Assegna il DataFrame unito e corretto al dizionario
+                historical_data_dict[ticker] = combined_df
+                # --- FINE DELLA CORREZIONE ---
                 else:
                     historical_data_dict[ticker] = delta_df
             print("Unione nel dizionario completata.")
