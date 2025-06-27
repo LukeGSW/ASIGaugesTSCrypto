@@ -1,3 +1,5 @@
+# run_daily_update.py
+
 import os
 import pandas as pd
 from src.gdrive_service import get_gdrive_service, find_id, upload_or_update_parquet, download_all_parquets_in_folder
@@ -33,60 +35,36 @@ if __name__ == "__main__":
         print("Cartelle trovate con successo.")
 
         raw_history_df = download_all_parquets_in_folder(gdrive_service, raw_history_folder_id)
+        
         tickers_list = raw_history_df['ticker'].unique().tolist()
         daily_delta_df = dp.fetch_daily_delta(tickers_list, EODHD_API_KEY)
 
         if daily_delta_df is not None and not daily_delta_df.empty:
+            print("Dati incrementali trovati. Unisco con lo storico...")
             updated_history_df = pd.concat(
                 [raw_history_df, daily_delta_df], 
                 ignore_index=True
             ).drop_duplicates(subset=['date', 'ticker'], keep='last').sort_values('date')
-            print("Unione dati (storico + delta) completata.")
+            print("Unione dati completata.")
         else:
             print("Nessun nuovo dato dall'API, procedo con i dati storici esistenti.")
             updated_history_df = raw_history_df
         
-        # --- BLOCCO DI ISPEZIONE FINALE DEI DATI ---
-        print("\n\n--- ISPEZIONE FINALE DEL DATAFRAME 'updated_history_df' ---")
-        print("Questo è un riassunto dei dati ESATTI che stanno per essere usati per creare i panieri.")
+        print(f"DataFrame finale preparato con {len(updated_history_df)} righe.")
         
-        print("\n[1] Informazioni Generali (Tipi di dato e valori non nulli):")
-        updated_history_df.info(verbose=True, show_counts=True)
-        
-        print("\n[2] Ultime 10 righe del DataFrame:")
-        print(updated_history_df.tail(10))
-
-        print("\n[3] Statistiche Descrittive per le colonne numeriche:")
-        try:
-            print(updated_history_df.describe())
-        except Exception as desc_e:
-            print(f"Impossibile generare statistiche descrittive: {desc_e}")
-
-        print("\n[4] Controllo dei volumi per gli ultimi 90 giorni:")
-        try:
-            last_90_days_df = updated_history_df[updated_history_df['date'] > (updated_history_df['date'].max() - pd.Timedelta(days=90))]
-            volume_summary = last_90_days_df.groupby('ticker')['volume'].sum().sort_values(ascending=False)
-            print("Primi 20 ticker per volume negli ultimi 90 giorni:")
-            print(volume_summary.head(20))
-            print("...\nUltimi 20 ticker per volume negli ultimi 90 giorni:")
-            print(volume_summary.tail(20))
-            print(f"\nVolume totale per BTC negli ultimi 90 giorni: {volume_summary.get('BTC-USD.CC', 'Non trovato')}")
-        except Exception as vol_e:
-            print(f"Impossibile generare riassunto volumi: {vol_e}")
-            
-        print("--- FINE ISPEZIONE ---\n\n")
-        # --- FINE BLOCCO DI ISPEZIONE ---
-
         print("Inizio generazione panieri dinamici...")
         dynamic_baskets = dp.create_dynamic_baskets(updated_history_df, performance_window=90)
-
+        print(f"Generati {len(dynamic_baskets)} panieri.")
 
         print("Inizio calcolo Altcoin Season Index...")
         final_asi_df = dp.calculate_full_asi(updated_history_df, dynamic_baskets)
         
         if final_asi_df.empty:
-            print("!!! ATTENZIONE FINALE: Il DataFrame calcolato è VUOTO. Verrà salvato un file vuoto. !!!")
+            print("!!! ATTENZIONE: Il DataFrame finale dell'ASI è VUOTO. Questo può accadere se non ci sono abbastanza dati storici per il calcolo.")
+            # Salviamo comunque un file vuoto con le colonne corrette per coerenza
+            final_asi_df = pd.DataFrame(columns=['index_value', 'outperforming_count', 'basket_size']).set_index(pd.to_datetime([]))
 
+        print(f"Calcolo ASI completato. Il DataFrame finale ha {len(final_asi_df)} righe.")
         upload_or_update_parquet(gdrive_service, final_asi_df, PRODUCTION_FILE_NAME, production_folder_id)
 
         print("\n>>> Processo di aggiornamento quotidiano completato con successo.")
