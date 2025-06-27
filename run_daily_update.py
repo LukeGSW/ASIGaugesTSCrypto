@@ -33,32 +33,37 @@ if __name__ == "__main__":
         tickers_list = list(historical_data_dict.keys())
         daily_delta_dict = dp.fetch_daily_delta(tickers_list, EODHD_API_KEY)
 
-        if daily_delta_dict:
-            print("Dati incrementali trovati. Eseguo unione nel dizionario...")
-            for ticker, delta_df in daily_delta_dict.items():
-                if ticker in historical_data_dict:
-                    hist_df = historical_data_dict[ticker]
-                    
-                    # --- INIZIO DELLA CORREZIONE ---
-                    # 1. Rimuovi dallo storico le righe le cui date sono presenti nel nuovo delta.
-                    #    Questo previene l'errore di indice duplicato in pd.concat.
-                    #    `errors='ignore'` è utile se una data del delta non fosse nello storico.
-                    hist_df = hist_df.drop(delta_df.index, errors='ignore')
-                    
-                    # 2. Ora concatena in sicurezza, non ci sono più duplicati.
-                    combined_df = pd.concat([hist_df, delta_df])
-                    
-                    # 3. Ordina l'indice per mantenere la cronologia corretta.
-                    combined_df.sort_index(inplace=True)
-                    
-                    # Assegna il DataFrame unito e corretto al dizionario
-                    historical_data_dict[ticker] = combined_df
-                    # --- FINE DELLA CORREZIONE ---
-                else:
-                    historical_data_dict[ticker] = delta_df
-            print("Unione nel dizionario completata.")
+        # Sostituisci il blocco if/for esistente con questo
+if daily_delta_dict:
+    print("Dati incrementali trovati. Eseguo unione nel dizionario...")
+    for ticker, delta_df in daily_delta_dict.items():
+        if ticker in historical_data_dict:
+            hist_df = historical_data_dict[ticker]
+            
+            # --- INIZIO DELLA SOLUZIONE ---
+            
+            # 1. Rimuovi dal DataFrame storico le righe le cui date sono già presenti nel nuovo delta.
+            #    Questo previene l'errore di indice duplicato in pd.concat.
+            hist_df_cleaned = hist_df.drop(delta_df.index, errors='ignore')
+            
+            # 2. Concatena il vecchio dataframe (ora pulito) con il nuovo.
+            combined_df = pd.concat([hist_df_cleaned, delta_df])
+            
+            # 3. Rimuovi eventuali duplicati residui (doppia sicurezza) e ordina l'indice per data.
+            combined_df = combined_df[~combined_df.index.duplicated(keep='last')]
+            combined_df.sort_index(inplace=True)
+            
+            # 4. Assegna il DataFrame aggiornato e corretto al dizionario principale.
+            historical_data_dict[ticker] = combined_df
+
+            # --- FINE DELLA SOLUZIONE ---
         else:
-            print("Nessun nuovo dato dall'API.")
+            # Se il ticker è nuovo (non nello storico), aggiungilo semplicemente.
+            historical_data_dict[ticker] = delta_df
+            
+    print("Unione nel dizionario completata.")
+else:
+    print("Nessun nuovo dato dall'API.")
 
         full_df_for_baskets = pd.concat(historical_data_dict.values()).reset_index()
         
