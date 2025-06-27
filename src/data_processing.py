@@ -126,8 +126,9 @@ def calculate_full_asi(df: pd.DataFrame, baskets: Dict, performance_window: int 
     
     print(f"Ticker di Bitcoin identificato: {btc_ticker}")
     
-    btc_perf = df_with_dates[df_with_dates['ticker'] == btc_ticker]['close'].pct_change(periods=performance_window)
-    alt_perf = df_with_dates[df_with_dates['ticker'] != btc_ticker].groupby('ticker')['close'].pct_change(periods=performance_window)
+    btc_perf = df_with_dates[df_with_dates['ticker'] == btc_ticker]['close'].pct_change(periods=performance_window, min_periods=int(performance_window * 0.8))
+    alt_perf = df_with_dates[df_with_dates['ticker'] != btc_ticker].groupby('ticker')['close'].pct_change(periods=performance_window, min_periods=int(performance_window * 0.8))
+
     
     all_dates = df_with_dates.index.unique().sort_values()
     rebalancing_dates = sorted(baskets.keys())
