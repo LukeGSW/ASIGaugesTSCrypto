@@ -1,5 +1,3 @@
-# run_daily_update.py
-
 import os
 import pandas as pd
 from src.gdrive_service import get_gdrive_service, find_id, upload_or_update_parquet, download_all_parquets_in_folder
@@ -21,7 +19,7 @@ if __name__ == "__main__":
         raise ValueError("Errore: una o più variabili d'ambiente necessarie non sono state impostate.")
 
     gdrive_service = get_gdrive_service(GDRIVE_SA_KEY)
-
+    
     try:
         print("Ricerca cartelle su Google Drive...")
         root_folder_id = find_id(gdrive_service, name=ROOT_FOLDER_NAME, mime_type='application/vnd.google-apps.folder')
@@ -39,8 +37,8 @@ if __name__ == "__main__":
             print("Dati incrementali trovati. Eseguo unione nel dizionario...")
             for ticker, delta_df in daily_delta_dict.items():
                 if ticker in historical_data_dict:
-                    # --- QUESTA È LA RIGA CORRETTA ---
-                    # Unisce i dati storici del ticker con il SUO delta, non con tutto il dizionario.
+                    # --- QUESTA È LA CORREZIONE ---
+                    # Unisce i dati storici del ticker con il SUO delta specifico
                     combined_df = pd.concat([historical_data_dict[ticker], delta_df])
                     historical_data_dict[ticker] = combined_df[~combined_df.index.duplicated(keep='last')]
                 else:
@@ -49,12 +47,10 @@ if __name__ == "__main__":
         else:
             print("Nessun nuovo dato dall'API.")
 
-        # Trasformiamo il dizionario in un unico DataFrame solo quando serve per creare i panieri
-        print("Preparo i dati per la creazione dei panieri...")
-        temp_df_for_baskets = pd.concat(historical_data_dict.values()).reset_index()
+        full_df_for_baskets = pd.concat(historical_data_dict.values()).reset_index()
         
         print("Inizio generazione panieri dinamici...")
-        dynamic_baskets = dp.create_dynamic_baskets(temp_df_for_baskets)
+        dynamic_baskets = dp.create_dynamic_baskets(full_df_for_baskets)
         print(f"Generati {len(dynamic_baskets)} panieri.")
 
         print("Inizio calcolo Altcoin Season Index...")
