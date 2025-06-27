@@ -1,4 +1,4 @@
-# src/gdrive_service.py (VERSIONE CON AUTENTICAZIONE ROBUSTA)
+# src/gdrive_service.py (VERSIONE CON AUTENTICAZIONE FILE-IN-MEMORY)
 
 import io
 import json
@@ -12,24 +12,31 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 from googleapiclient.errors import HttpError
 
-# --- NUOVA VERSIONE DELLA FUNZIONE ---
+# --- NUOVA VERSIONE DELLA FUNZIONE DI AUTENTICAZIONE ---
 def get_gdrive_service(sa_key_string: str):
     """
     Crea un servizio autenticato per Google Drive usando la stringa della chiave JSON,
-    trattandola come un file in memoria per massima compatibilità.
+    convertendola in un file binario in-memory per la massima compatibilità.
     """
     try:
-        # Carica le credenziali direttamente dalla stringa JSON usando from_service_account_info
-        # Questo è il metodo standard e dovrebbe funzionare correttamente.
-        creds_info = json.loads(sa_key_string)
-        creds = service_account.Credentials.from_service_account_info(creds_info)
+        # 1. Converte la stringa della chiave JSON in bytes
+        sa_key_bytes = sa_key_string.encode('utf-8')
+        
+        # 2. Crea un "file binario virtuale" in memoria (un seekable bit stream)
+        creds_file_bytes = io.BytesIO(sa_key_bytes)
+        
+        # 3. Usa il metodo 'from_service_account_file' che è progettato
+        #    per leggere da oggetti simili a file, come quello che abbiamo creato.
+        creds = service_account.Credentials.from_service_account_file(creds_file_bytes)
+        
         service = build('drive', 'v3', credentials=creds, cache_discovery=False)
-        print("Servizio Google Drive autenticato con successo.")
+        print("Servizio Google Drive autenticato con successo (Metodo File-in-Memory).")
         return service
     except Exception as e:
         print(f"Errore fatale durante l'autenticazione a Google Drive: {e}")
         raise
-# ------------------------------------
+# --- FINE DELLA NUOVA VERSIONE ---
+
 
 def _execute_with_retry(request, retries=5, backoff_factor=2):
     """Esegue una richiesta API con logica di retry e backoff esponenziale."""
@@ -69,7 +76,6 @@ def upload_or_update_parquet(service, df: pd.DataFrame, file_name: str, parent_f
     """Carica o aggiorna un DataFrame come file .parquet su Google Drive."""
     file_metadata = {'name': file_name, 'parents': [parent_folder_id]}
     buffer = io.BytesIO()
-    # Quando salviamo, includiamo l'indice (che dovrebbe essere la data)
     df.to_parquet(buffer, index=True) 
     buffer.seek(0)
     media = MediaIoBaseUpload(buffer, mimetype='application/octet-stream', resumable=True)
