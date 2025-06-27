@@ -1,6 +1,7 @@
 # run_daily_update.py
 
 import os
+import pandas as pd
 from src.gdrive_service import get_gdrive_service, find_id, upload_or_update_parquet, download_all_parquets_in_folder
 import src.data_processing as dp
 
@@ -36,30 +37,26 @@ if __name__ == "__main__":
         tickers_list = list(historical_data_dict.keys())
         daily_delta_dict = dp.fetch_daily_delta(tickers_list, EODHD_API_KEY)
 
+        # Ora lavoriamo con i dizionari, non più con l'unione di DataFrame giganti
         if daily_delta_dict:
             print("Dati incrementali trovati. Eseguo unione nel dizionario...")
             for ticker, delta_df in daily_delta_dict.items():
                 if ticker in historical_data_dict:
-                    # Concatena e rimuovi duplicati per ogni singolo ticker
                     combined_df = pd.concat([historical_data_dict[ticker], delta_df])
                     historical_data_dict[ticker] = combined_df[~combined_df.index.duplicated(keep='last')]
                 else:
                     historical_data_dict[ticker] = delta_df
-            print("Unione completata.")
+            print("Unione nel dizionario completata.")
         else:
             print("Nessun nuovo dato dall'API.")
-        
-        # Ora 'historical_data_dict' è il nostro dataset completo e aggiornato
-        
+
         # --- FASE 3: CALCOLO ---
         print("Inizio generazione panieri dinamici...")
-        # Trasformiamo temporaneamente in DataFrame per questa funzione (più semplice)
-        full_df_for_baskets = pd.concat(historical_data_dict.values(), keys=historical_data_dict.keys(), names=['ticker', 'date']).reset_index()
-        dynamic_baskets = dp.create_dynamic_baskets(full_df_for_baskets)
+        # La funzione di calcolo ora lavora direttamente con il dizionario
+        dynamic_baskets = dp.create_dynamic_baskets(historical_data_dict)
         print(f"Generati {len(dynamic_baskets)} panieri.")
 
         print("Inizio calcolo Altcoin Season Index...")
-        # La funzione di calcolo ora lavora direttamente con il dizionario
         final_asi_df = dp.calculate_full_asi(historical_data_dict, dynamic_baskets)
         
         if final_asi_df.empty:
