@@ -116,9 +116,12 @@ def download_parquet(service, file_id: str) -> Optional[pd.DataFrame]:
         return None
 
 
+# in src/gdrive_service.py
+
 def download_all_parquets_in_folder(service, folder_id: str) -> pd.DataFrame:
     """
-    Scarica tutti i file .parquet da una cartella di GDrive e li unisce in un DataFrame.
+    Scarica tutti i file .parquet da una cartella di GDrive e li unisce in un DataFrame,
+    garantendo la coerenza del formato della data.
     """
     print(f"Ricerca file .parquet nella cartella con ID: {folder_id}...")
     query = f"'{folder_id}' in parents and mimeType != 'application/vnd.google-apps.folder' and name contains '.parquet'"
@@ -129,7 +132,7 @@ def download_all_parquets_in_folder(service, folder_id: str) -> pd.DataFrame:
         files = response.get('files', [])
         
         if not files:
-            raise FileNotFoundError("Nessun file .parquet trovato nella cartella specificata. Eseguire prima il 'full_refresh'.")
+            raise FileNotFoundError("Nessun file .parquet trovato. Eseguire prima il 'full_refresh'.")
 
         df_list = []
         total_files = len(files)
@@ -137,27 +140,31 @@ def download_all_parquets_in_folder(service, folder_id: str) -> pd.DataFrame:
         for i, file in enumerate(files):
             print(f"  - Download {i+1}/{total_files}: {file.get('name')}")
             df = download_parquet(service, file.get('id'))
-            # Controlla che il df non sia None e non sia vuoto
-            if df is not None and not df.empty:
-                # Il nome del file diventa la colonna 'ticker'
+            
+            if df is not None:
                 df['ticker'] = file.get('name').replace('.parquet', '')
-                # Assicura che l'indice sia la colonna 'date' se non lo è già
-                if not isinstance(df.index, pd.DatetimeIndex):
-                    if 'date' in df.columns:
-                        df = df.set_index('date')
-                    else:
-                        print(f"Attenzione: file {file.get('name')} non ha una colonna 'date'. Salto.")
-                        continue
+                # Se la data è l'indice, la spostiamo in una colonna
+                if isinstance(df.index, pd.DatetimeIndex):
+                    df.reset_index(inplace=True)
                 df_list.append(df)
             else:
-                print(f"  - Dati non scaricati o vuoti per {file.get('name')}. Salto.")
+                 print(f"  - Dati non scaricati o vuoti per {file.get('name')}. Salto.")
         
         if not df_list:
              raise ValueError("Nessun dato valido è stato scaricato dalla cartella.")
 
-        # L'unione ora funziona su indici di data, più robusto
-        full_df = pd.concat(df_list, ignore_index=False)
-        full_df.reset_index(inplace=True)
+        full_df = pd.concat(df_list, ignore_index=True)
+
+        # --- INIZIO DELLA CORREZIONE ---
+        # Conversione finale e autorevole della colonna 'date'.
+        # Questo risolve ogni incoerenza proveniente dai file singoli.
+        if 'date' in full_df.columns:
+            full_df['date'] = pd.to_datetime(full_df['date'])
+            print("Colonna 'date' convertita con successo in formato datetime.")
+        else:
+            raise ValueError("DataFrame finale non contiene una colonna 'date'. Impossibile procedere.")
+        # --- FINE DELLA CORREZIONE ---
+            
         return full_df
 
     except Exception as e:
