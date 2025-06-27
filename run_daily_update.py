@@ -33,47 +33,47 @@ if __name__ == "__main__":
         tickers_list = list(historical_data_dict.keys())
         daily_delta_dict = dp.fetch_daily_delta(tickers_list, EODHD_API_KEY)
 
-        # Sostituisci il blocco if/for esistente con questo
+        # --- BLOCCO DI UNIONE DATI CON CORREZIONE APPLICATA ---
         if daily_delta_dict:
             print("Dati incrementali trovati. Eseguo unione nel dizionario...")
             for ticker, delta_df in daily_delta_dict.items():
                 if ticker in historical_data_dict:
                     hist_df = historical_data_dict[ticker]
                     
-                    # --- INIZIO DELLA SOLUZIONE ROBUSTA ---
-                    
-                    # 1. ASSICURA L'UNICITÀ DELLO STORICO: Questo è il passo chiave mancante.
-                    #    Controlla se l'indice del DataFrame storico ha duplicati e, in caso, li rimuove.
+                    # 1. Assicura che l'indice del DataFrame storico sia unico PRIMA di ogni altra operazione.
                     if not hist_df.index.is_unique:
                         print(f"  - ATTENZIONE: Trovato e rimosso indice duplicato nello storico per {ticker}.")
                         hist_df = hist_df[~hist_df.index.duplicated(keep='last')]
-        
-                    # 2. ASSICURA L'UNICITÀ DEL DELTA (doppia sicurezza, anche se improbabile dall'API).
+
+                    # 2. Assicura (per sicurezza) che anche il delta sia unico.
                     if not delta_df.index.is_unique:
                         delta_df = delta_df[~delta_df.index.duplicated(keep='last')]
                     
-                    # 3. Rimuovi dallo storico (ora pulito) le righe le cui date sono presenti nel nuovo delta.
+                    # 3. Rimuovi dallo storico le righe le cui date sono già presenti nel nuovo delta.
                     hist_df_cleaned = hist_df.drop(delta_df.index, errors='ignore')
                     
-                    # 4. Concatena in sicurezza. Ora entrambi i DataFrame hanno indici unici e non sovrapposti.
+                    # 4. Concatena il vecchio dataframe (pulito) con il nuovo.
                     combined_df = pd.concat([hist_df_cleaned, delta_df])
                     
-                    # 5. Ordina l'indice per mantenere la cronologia corretta.
+                    # 5. Ordina l'indice per mantenere la cronologia.
                     combined_df.sort_index(inplace=True)
                     
                     historical_data_dict[ticker] = combined_df
-                    # --- FINE DELLA SOLUZIONE ROBUSTA ---
-        
                 else:
                     # Se il ticker è nuovo, aggiungilo semplicemente.
                     historical_data_dict[ticker] = delta_df
-                    
+            
             print("Unione nel dizionario completata.")
         else:
-    print("Nessun nuovo dato dall'API.")
+            print("Nessun nuovo dato dall'API.")
 
+        # Concatena tutti i dati aggiornati in un unico DataFrame per la funzione dei panieri
         full_df_for_baskets = pd.concat(historical_data_dict.values()).reset_index()
-        
+        # Aggiungi una colonna 'ticker' se non è già presente, derivandola dal nome del file
+        # Questo passo è cruciale se i DataFrame individuali non hanno la colonna 'ticker'
+        if 'ticker' not in full_df_for_baskets.columns:
+            full_df_for_baskets['ticker'] = pd.concat([pd.Series(ticker, index=df.index) for ticker, df in historical_data_dict.items()]).values
+
         print("Inizio generazione panieri dinamici...")
         dynamic_baskets = dp.create_dynamic_baskets(full_df_for_baskets)
         print(f"Generati {len(dynamic_baskets)} panieri.")
