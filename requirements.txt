@@ -14,7 +14,8 @@ plotly
 requests
 
 # Librerie per l'API di Google Drive
-google-api-python-client==2.84.0
-google-auth-httplib2==0.1.0
-google-auth-oauthlib==0.7.1
-google-auth==2.22.0
+cryptography>=3.4.0
+google-api-python-client>=2.90.0
+google-auth-httplib2>=0.1.0
+google-auth-oauthlib>=1.0.0
+google-auth>=2.23.0
