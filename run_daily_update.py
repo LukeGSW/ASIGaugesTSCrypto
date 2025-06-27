@@ -1,4 +1,4 @@
-# run_daily_update.py (VERSIONE DI DEBUG)
+# run_daily_update.py (VERSIONE CON DEBUG AVANZATO)
 
 import os
 import pandas as pd
@@ -37,46 +37,34 @@ if __name__ == "__main__":
         # 1. Carica la base dati storica completa da Google Drive
         raw_history_df = download_all_parquets_in_folder(gdrive_service, raw_history_folder_id)
         
-        # --- BLOCCO DI DEBUG #1: Analisi del primo DataFrame ---
-        print("\n--- DEBUG: Analisi di 'raw_history_df' ---")
-        print(f"Shape: {raw_history_df.shape}")
-        print(f"Indice è unico? {raw_history_df.index.is_unique}")
-        print(f"Numero di duplicati nell'indice: {raw_history_df.index.duplicated().sum()}")
-        print("Prime 5 righe dell'indice:", raw_history_df.index[:5])
-        print("--------------------------------------------\n")
-        
+        # --- NUOVO BLOCCO DI DEBUG: VERIFICA PRESENZA BTC ---
+        print("\n--- DEBUG: VERIFICA PRESENZA BTC IN 'raw_history_df' ---")
+        btc_ticker_name = "BTC-USD.CC"
+        # Controlliamo se la stringa esatta del ticker è presente nella colonna 'ticker'
+        is_btc_present = btc_ticker_name in raw_history_df['ticker'].unique()
+        print(f"Il ticker '{btc_ticker_name}' è presente nel DataFrame caricato da GDrive? -> {is_btc_present}")
+        if not is_btc_present:
+            print("Elenco dei primi 20 ticker UNICI trovati nel DataFrame (potrebbe aiutare a identificare problemi di nomi):")
+            print(raw_history_df['ticker'].unique()[:20])
+        print("----------------------------------------------------------\n")
+        # --- FINE NUOVO BLOCCO DI DEBUG ---
+
         # 2. Scarica il "delta" incrementale dall'API di EODHD
         tickers_list = raw_history_df['ticker'].unique().tolist()
         daily_delta_df = dp.fetch_daily_delta(tickers_list, EODHD_API_KEY)
 
         if daily_delta_df is not None and not daily_delta_df.empty:
-            # --- BLOCCO DI DEBUG #2: Analisi del secondo DataFrame ---
-            print("\n--- DEBUG: Analisi di 'daily_delta_df' ---")
-            print(f"Shape: {daily_delta_df.shape}")
-            print(f"Indice è unico? {daily_delta_df.index.is_unique}")
-            print(f"Numero di duplicati nell'indice: {daily_delta_df.index.duplicated().sum()}")
-            print("Prime 5 righe dell'indice:", daily_delta_df.index[:5])
-            print("-------------------------------------------\n")
-
             # 3. Unisci i dati
-            try:
-                print(">>> Tentativo di unire i dati con pd.concat(ignore_index=True)...")
-                updated_history_df = pd.concat(
-                    [raw_history_df, daily_delta_df], 
-                    ignore_index=True
-                ).drop_duplicates(subset=['date', 'ticker'], keep='last').sort_values('date')
-                print(">>> Unione dati completata con successo.")
-            except Exception as e:
-                print("\n!!! ERRORE INTERCETTATO DURANTE pd.concat !!!")
-                print(f"Tipo di errore: {type(e)}")
-                print(f"Messaggio di errore: {e}")
-                raise e # Rilanciamo l'errore per far fallire il job
+            updated_history_df = pd.concat(
+                [raw_history_df, daily_delta_df], 
+                ignore_index=True
+            ).drop_duplicates(subset=['date', 'ticker'], keep='last').sort_values('date')
+            print("Unione dati (storico + delta) completata.")
         else:
-            print("Nessun nuovo dato dall'API, procedo con i dati esistenti.")
+            print("Nessun nuovo dato dall'API, procedo con i dati storici esistenti.")
             updated_history_df = raw_history_df
 
         # 4. Esegui la logica di calcolo principale
-        # ... (il resto dello script rimane invariato)
         print("Inizio generazione panieri dinamici...")
         dynamic_baskets = dp.create_dynamic_baskets(updated_history_df)
         print(f"Generati {len(dynamic_baskets)} panieri.")
