@@ -75,7 +75,8 @@ if __name__ == "__main__":
             df_copy['ticker'] = ticker
             df_list_for_concat.append(df_copy)
 
-        full_df_for_baskets = pd.concat(df_list_for_concat).reset_index()
+        full_df_for_baskets = pd.concat(historical_data_dict, names=['ticker', 'date']).reset_index()
+
         
         print("Inizio generazione panieri dinamici...")
         dynamic_baskets = dp.create_dynamic_baskets(full_df_for_baskets)
