@@ -1,12 +1,10 @@
-# src/gdrive_service.py (VERSIONE DEFINITIVA CON FILE TEMPORANEO)
+# src/gdrive_service.py (VERSIONE CON PATCH PER BUG GOOGLE-AUTH)
 
 import io
 import json
 import pandas as pd
 import time
 import socket
-import os
-import tempfile
 from typing import Optional
 
 from google.oauth2 import service_account
@@ -14,34 +12,34 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 from googleapiclient.errors import HttpError
 
-# --- NUOVA VERSIONE DELLA FUNZIONE DI AUTENTICAZIONE ---
+# --- FUNZIONE DI AUTENTICAZIONE CON PATCH DEFINITIVA ---
 def get_gdrive_service(sa_key_string: str):
     """
-    Crea un servizio autenticato scrivendo temporaneamente la chiave su disco
-    per garantire la massima compatibilità con la libreria di Google.
+    Crea un servizio autenticato, applicando una patch per un bug
+    nella libreria google-auth che non gestisce correttamente il formato della chiave privata.
     """
-    # Crea un file temporaneo per scrivere la chiave del service account
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as temp_key_file:
-        temp_key_file.write(sa_key_string)
-        temp_key_path = temp_key_file.name # Ottiene il percorso del file temporaneo
-
-    print(f"File di chiave temporaneo creato in: {temp_key_path}")
-
     try:
-        # Esegue l'autenticazione usando il percorso del file temporaneo
-        creds = service_account.Credentials.from_service_account_file(temp_key_path)
+        # Carica le credenziali dalla stringa JSON in un dizionario Python
+        creds_info = json.loads(sa_key_string)
+
+        # --- INIZIO DELLA CORREZIONE DEFINITIVA ---
+        # Convertiamo manualmente la chiave privata da stringa a bytes.
+        # Questo è necessario perché la libreria google-auth ha un bug/incompatibilità
+        # e non esegue questa conversione fondamentale da sola.
+        creds_info['private_key'] = creds_info['private_key'].encode('utf-8')
+        # --- FINE DELLA CORREZIONE DEFINITIVA ---
+
+        # Passiamo il dizionario corretto alla funzione di creazione delle credenziali
+        creds = service_account.Credentials.from_service_account_info(creds_info)
+        
+        # Costruisce il servizio
         service = build('drive', 'v3', credentials=creds, cache_discovery=False)
-        print("Servizio Google Drive autenticato con successo (Metodo File Temporaneo).")
+        print("Servizio Google Drive autenticato con successo (con patch per bug).")
         return service
     except Exception as e:
         print(f"Errore fatale durante l'autenticazione a Google Drive: {e}")
-        # Rilancia l'eccezione per far fallire lo script e vedere l'errore
         raise
-    finally:
-        # In ogni caso (successo o fallimento), elimina il file temporaneo per sicurezza
-        os.remove(temp_key_path)
-        print(f"File di chiave temporaneo '{temp_key_path}' eliminato.")
-# --- FINE DELLA NUOVA VERSIONE ---
+# --- FINE DELLA FUNZIONE CON PATCH ---
 
 
 def _execute_with_retry(request, retries=5, backoff_factor=2):
