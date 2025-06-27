@@ -1,19 +1,9 @@
-# requirements.txt
-
-# Core per la dashboard web
+# requirements.txt (CON BACKEND CRITTOGRAFICO ESPLICITO)
 streamlit
-
-# Manipolazione e analisi dati
 pandas
 numpy
-
-# Grafici
 plotly
-
-# Per interagire con l'API di EODHD
 requests
-
-# Librerie per l'API di Google Drive
 cryptography>=3.4.0
 google-api-python-client>=2.90.0
 google-auth-httplib2>=0.1.0
