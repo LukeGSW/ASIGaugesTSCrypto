@@ -1,10 +1,7 @@
-# src/gdrive_service.py
-
 import io
 import json
 import pandas as pd
 import time
-import socket
 from typing import Optional, Dict
 
 from google.oauth2 import service_account
@@ -25,10 +22,8 @@ def get_gdrive_service(sa_key_string: str):
 
 def find_id(service, name: str, parent_id: str = None, mime_type: str = None) -> Optional[str]:
     query = f"name = '{name}' and trashed = false"
-    if parent_id:
-        query += f" and '{parent_id}' in parents"
-    if mime_type:
-        query += f" and mimeType = '{mime_type}'"
+    if parent_id: query += f" and '{parent_id}' in parents"
+    if mime_type: query += f" and mimeType = '{mime_type}'"
     
     try:
         request = service.files().list(q=query, spaces='drive', fields='files(id, name)')
@@ -42,10 +37,7 @@ def find_id(service, name: str, parent_id: str = None, mime_type: str = None) ->
 def upload_or_update_parquet(service, df: pd.DataFrame, file_name: str, parent_folder_id: str) -> None:
     file_metadata = {'name': file_name, 'parents': [parent_folder_id]}
     buffer = io.BytesIO()
-    if isinstance(df.index, pd.DatetimeIndex):
-        df_to_save = df.reset_index()
-    else:
-        df_to_save = df
+    df_to_save = df.reset_index() if isinstance(df.index, pd.DatetimeIndex) else df
     df_to_save.to_parquet(buffer, index=False)
     buffer.seek(0)
     media = MediaIoBaseUpload(buffer, mimetype='application/octet-stream', resumable=True)
@@ -55,10 +47,10 @@ def upload_or_update_parquet(service, df: pd.DataFrame, file_name: str, parent_f
     try:
         if existing_file_id:
             request = service.files().update(fileId=existing_file_id, media_body=media)
-            print(f"  - Tentativo di aggiornamento per {file_name}...")
+            print(f"  - Aggiornamento file: {file_name}...")
         else:
             request = service.files().create(body=file_metadata, media_body=media, fields='id')
-            print(f"  - Tentativo di creazione per {file_name}...")
+            print(f"  - Creazione file: {file_name}...")
         
         request.execute()
         print(f"  - CONFERMATO: '{file_name}' gestito con successo.")
@@ -75,10 +67,9 @@ def download_parquet(service, file_id: str) -> Optional[pd.DataFrame]:
         while not done:
             status, done = downloader.next_chunk()
         file_buffer.seek(0)
-        df = pd.read_parquet(file_buffer)
-        return df
+        return pd.read_parquet(file_buffer)
     except HttpError as e:
-        print(f"Errore durante il download del file con ID '{file_id}': {e}")
+        print(f"Errore download file ID '{file_id}': {e}")
         return None
 
 def download_all_parquets_in_folder(service, folder_id: str) -> Dict[str, pd.DataFrame]:
