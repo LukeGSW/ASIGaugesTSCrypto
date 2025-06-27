@@ -54,11 +54,18 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[Dict[str, pd
 def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int = 30, rebalancing_freq: str = '90D', performance_window: int = 90) -> Dict:
     if df.empty: return {}
         
-    df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
-    df_with_dates = df.set_index('date')
+    # --- INIZIO SOLUZIONE ---
     
+    # 1. Assicura che la colonna 'date' sia in formato datetime corretto.
+    df['date'] = pd.to_datetime(df['date'])
+
+    df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
+    
+    # 2. NON impostare più la data come indice del DataFrame aggregato.
+    # df_with_dates = df.set_index('date') <-- RIMUOVI O COMMENTA QUESTA RIGA
+
     start_date = pd.to_datetime('2017-01-01')
-    end_date = df_with_dates.index.max()
+    end_date = df['date'].max() # Usa la colonna 'date'
     rebalancing_dates = pd.date_range(start=start_date, end=end_date, freq=rebalancing_freq)
     
     baskets = {}
@@ -66,7 +73,13 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
 
     for reb_date in rebalancing_dates:
         lookback_start = reb_date - pd.Timedelta(days=lookback_days)
-        volume_period_df = df_with_dates.loc[lookback_start:reb_date]
+
+        # 3. Usa il boolean indexing sulla colonna 'date' invece dello slicing su .loc.
+        mask = (df['date'] > lookback_start) & (df['date'] <= reb_date)
+        volume_period_df = df.loc[mask]
+        
+        # --- FINE SOLUZIONE ---
+
         if volume_period_df.empty: continue
             
         total_volume = volume_period_df.groupby('ticker')['volume'].sum()
@@ -79,7 +92,8 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
         
         final_basket_coins = []
         for ticker in top_by_volume.index:
-            ticker_history_before_reb = df_with_dates.loc[df_with_dates['ticker'] == ticker].loc[:reb_date]
+            # Filtra per ticker E per data
+            ticker_history_before_reb = df[df['ticker'] == ticker].loc[df['date'] <= reb_date]
             if len(ticker_history_before_reb) >= performance_window:
                 final_basket_coins.append(ticker)
         
