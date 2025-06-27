@@ -21,7 +21,7 @@ if __name__ == "__main__":
         raise ValueError("Errore: una o più variabili d'ambiente necessarie non sono state impostate.")
 
     gdrive_service = get_gdrive_service(GDRIVE_SA_KEY)
-    
+
     try:
         print("Ricerca cartelle su Google Drive...")
         root_folder_id = find_id(gdrive_service, name=ROOT_FOLDER_NAME, mime_type='application/vnd.google-apps.folder')
@@ -29,19 +29,18 @@ if __name__ == "__main__":
         production_folder_id = find_id(gdrive_service, name=PRODUCTION_FOLDER_NAME, parent_id=root_folder_id, mime_type='application/vnd.google-apps.folder')
         print("Cartelle trovate con successo.")
 
-        # --- FASE 1: CARICAMENTO DATI STORICI COME DIZIONARIO ---
         historical_data_dict = download_all_parquets_in_folder(gdrive_service, raw_history_folder_id)
         print(f"Dati storici caricati per {len(historical_data_dict)} tickers.")
 
-        # --- FASE 2: CARICAMENTO E UNIONE DATI INCREMENTALI ---
         tickers_list = list(historical_data_dict.keys())
         daily_delta_dict = dp.fetch_daily_delta(tickers_list, EODHD_API_KEY)
 
-        # Ora lavoriamo con i dizionari, non più con l'unione di DataFrame giganti
         if daily_delta_dict:
             print("Dati incrementali trovati. Eseguo unione nel dizionario...")
             for ticker, delta_df in daily_delta_dict.items():
                 if ticker in historical_data_dict:
+                    # --- QUESTA È LA RIGA CORRETTA ---
+                    # Unisce i dati storici del ticker con il SUO delta, non con tutto il dizionario.
                     combined_df = pd.concat([historical_data_dict[ticker], delta_df])
                     historical_data_dict[ticker] = combined_df[~combined_df.index.duplicated(keep='last')]
                 else:
@@ -50,10 +49,12 @@ if __name__ == "__main__":
         else:
             print("Nessun nuovo dato dall'API.")
 
-        # --- FASE 3: CALCOLO ---
+        # Trasformiamo il dizionario in un unico DataFrame solo quando serve per creare i panieri
+        print("Preparo i dati per la creazione dei panieri...")
+        temp_df_for_baskets = pd.concat(historical_data_dict.values()).reset_index()
+        
         print("Inizio generazione panieri dinamici...")
-        # La funzione di calcolo ora lavora direttamente con il dizionario
-        dynamic_baskets = dp.create_dynamic_baskets(historical_data_dict)
+        dynamic_baskets = dp.create_dynamic_baskets(temp_df_for_baskets)
         print(f"Generati {len(dynamic_baskets)} panieri.")
 
         print("Inizio calcolo Altcoin Season Index...")
@@ -64,7 +65,6 @@ if __name__ == "__main__":
         
         print(f"Calcolo ASI completato. Il DataFrame finale ha {len(final_asi_df)} righe.")
         
-        # --- FASE 4: UPLOAD ---
         upload_or_update_parquet(gdrive_service, final_asi_df, PRODUCTION_FILE_NAME, production_folder_id)
 
         print("\n>>> Processo di aggiornamento quotidiano completato con successo.")
