@@ -1,21 +1,19 @@
-# src/gdrive_service.py (VERSIONE CON PATCH PER BUG GOOGLE-AUTH)
+# src/gdrive_service.py
 
 import io
 import json
 import pandas as pd
 import time
 import socket
-from typing import Optional
+from typing import Optional, Dict
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 from googleapiclient.errors import HttpError
 
-# --- FUNZIONE DI AUTENTICAZIONE CON PATCH DEFINITIVA ---
-# Assicurati che la funzione get_gdrive_service sia questa:
+# ... (le altre funzioni rimangono uguali) ...
 
-# Funzione get_gdrive_service in src/gdrive_service.py
 def get_gdrive_service(sa_key_string: str):
     try:
         creds_info = json.loads(sa_key_string)
@@ -26,23 +24,6 @@ def get_gdrive_service(sa_key_string: str):
     except Exception as e:
         print(f"Errore fatale durante l'autenticazione a Google Drive: {e}")
         raise
-# ... (il resto del file gdrive_service.py rimane invariato) ...
-# --- FINE DELLA FUNZIONE CON PATCH ---
-
-
-def _execute_with_retry(request, retries=5, backoff_factor=2):
-    for i in range(retries):
-        try:
-            return request.execute()
-        except (HttpError, socket.timeout, ConnectionResetError) as e:
-            status_code = e.resp.status if isinstance(e, HttpError) else 'N/A'
-            if isinstance(e, HttpError) and status_code < 500:
-                 print(f"  - ERRORE CLIENT NON RECUPERABILE ({status_code}): {e}")
-                 raise 
-            wait_time = backoff_factor * (2 ** i)
-            print(f"  - ERRORE DI RETE/SERVER (Status: {status_code}). Riprovo tra {wait_time}s... (Tentativo {i+1}/{retries})")
-            time.sleep(wait_time)
-    raise Exception(f"La richiesta API è fallita dopo {retries} tentativi.")
 
 def find_id(service, name: str, parent_id: str = None, mime_type: str = None) -> Optional[str]:
     query = f"name = '{name}' and trashed = false"
@@ -50,9 +31,10 @@ def find_id(service, name: str, parent_id: str = None, mime_type: str = None) ->
         query += f" and '{parent_id}' in parents"
     if mime_type:
         query += f" and mimeType = '{mime_type}'"
+    
     try:
         request = service.files().list(q=query, spaces='drive', fields='files(id, name)')
-        response = _execute_with_retry(request)
+        response = request.execute()
         files = response.get('files', [])
         return files[0].get('id') if files else None
     except Exception as e:
@@ -60,77 +42,91 @@ def find_id(service, name: str, parent_id: str = None, mime_type: str = None) ->
         return None
 
 def upload_or_update_parquet(service, df: pd.DataFrame, file_name: str, parent_folder_id: str) -> None:
+    # Questa funzione rimane uguale
     file_metadata = {'name': file_name, 'parents': [parent_folder_id]}
     buffer = io.BytesIO()
-    df.to_parquet(buffer, index=True) 
+    # Resettiamo l'indice se è stato modificato, per salvare la data come colonna
+    if isinstance(df.index, pd.DatetimeIndex):
+        df_to_save = df.reset_index()
+    else:
+        df_to_save = df
+        
+    df_to_save.to_parquet(buffer, index=False)
     buffer.seek(0)
     media = MediaIoBaseUpload(buffer, mimetype='application/octet-stream', resumable=True)
+    
     existing_file_id = find_id(service, name=file_name, parent_id=parent_folder_id)
+    
     try:
         if existing_file_id:
-            request = service.files().update(fileId=existing_file_id, media_body=media, fields='id')
+            request = service.files().update(fileId=existing_file_id, media_body=media)
             print(f"  - Tentativo di aggiornamento per {file_name}...")
         else:
             request = service.files().create(body=file_metadata, media_body=media, fields='id')
             print(f"  - Tentativo di creazione per {file_name}...")
-        response = _execute_with_retry(request)
-        if response and response.get('id'):
-            print(f"  - CONFERMATO: '{file_name}' gestito con successo (File ID: {response.get('id')}).")
-        else:
-            raise Exception("L'API di Google Drive non ha restituito un ID file valido, l'upload è fallito.")
+        
+        request.execute()
+        print(f"  - CONFERMATO: '{file_name}' gestito con successo.")
     except Exception as e:
-        print(f"!!! FALLIMENTO FINALE per '{file_name}'. Errore: {e}")
+        print(f"!!! FALLIMENTO upload/update per '{file_name}'. Errore: {e}")
         raise
 
 def download_parquet(service, file_id: str) -> Optional[pd.DataFrame]:
+    # Questa funzione rimane uguale
     try:
         request = service.files().get_media(fileId=file_id)
         file_buffer = io.BytesIO()
         downloader = MediaIoBaseDownload(file_buffer, request)
+        
         done = False
         while not done:
             status, done = downloader.next_chunk()
+        
         file_buffer.seek(0)
         df = pd.read_parquet(file_buffer)
         return df
     except HttpError as e:
         print(f"Errore durante il download del file con ID '{file_id}': {e}")
         return None
-    except Exception as e:
-        print(f"Errore durante la lettura del file parquet con ID '{file_id}': {e}")
-        return None
 
-def download_all_parquets_in_folder(service, folder_id: str) -> pd.DataFrame:
+def download_all_parquets_in_folder(service, folder_id: str) -> Dict[str, pd.DataFrame]:
+    """
+    Scarica tutti i file .parquet da una cartella e li restituisce come un DIZIONARIO
+    di DataFrame, dove la chiave è il ticker.
+    """
     print(f"Ricerca file .parquet nella cartella con ID: {folder_id}...")
     query = f"'{folder_id}' in parents and mimeType != 'application/vnd.google-apps.folder' and name contains '.parquet'"
+    
     try:
         request = service.files().list(q=query, spaces='drive', fields='files(id, name)')
-        response = _execute_with_retry(request)
+        response = request.execute()
         files = response.get('files', [])
+        
         if not files:
             raise FileNotFoundError("Nessun file .parquet trovato. Eseguire prima il 'full_refresh'.")
-        df_list = []
+
+        data_dict = {}
         total_files = len(files)
         print(f"Trovati {total_files} file. Inizio download...")
         for i, file in enumerate(files):
             print(f"  - Download {i+1}/{total_files}: {file.get('name')}")
             df = download_parquet(service, file.get('id'))
-            if df is not None:
-                df['ticker'] = file.get('name').replace('.parquet', '')
-                if isinstance(df.index, pd.DatetimeIndex):
-                    df.reset_index(inplace=True)
-                df_list.append(df)
-            else:
-                 print(f"  - Dati non scaricati o vuoti per {file.get('name')}. Salto.")
-        if not df_list:
-             raise ValueError("Nessun dato valido è stato scaricato dalla cartella.")
-        full_df = pd.concat(df_list, ignore_index=True)
-        if 'date' in full_df.columns:
-            full_df['date'] = pd.to_datetime(full_df['date'])
-            print("Colonna 'date' convertita con successo in formato datetime.")
-        else:
-            raise ValueError("DataFrame finale non contiene una colonna 'date'. Impossibile procedere.")
-        return full_df
+            if df is not None and not df.empty:
+                # PULIZIA FONDAMENTALE ALL'ORIGINE
+                df.dropna(subset=['date', 'close', 'volume'], inplace=True)
+                df.drop_duplicates(subset=['date'], keep='last', inplace=True)
+                df['date'] = pd.to_datetime(df['date'])
+                df.set_index('date', inplace=True)
+                df.sort_index(inplace=True)
+                
+                ticker = file.get('name').replace('.parquet', '')
+                data_dict[ticker] = df
+        
+        if not data_dict:
+             raise ValueError("Nessun dato valido è stato scaricato.")
+
+        print("Colonna 'date' convertita con successo in formato datetime e impostata come indice.")
+        return data_dict
     except Exception as e:
         print(f"Errore durante il download dell'intera cartella: {e}")
         raise
