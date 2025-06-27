@@ -1,4 +1,4 @@
-# src/gdrive_service.py (VERSIONE CON AUTENTICAZIONE FILE-IN-MEMORY)
+# src/gdrive_service.py (VERSIONE CORRETTA E DEFINITIVA)
 
 import io
 import json
@@ -12,30 +12,25 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 from googleapiclient.errors import HttpError
 
-# --- NUOVA VERSIONE DELLA FUNZIONE DI AUTENTICAZIONE ---
+# --- FUNZIONE DI AUTENTICAZIONE RIPRISTINATA ALLA VERSIONE CORRETTA ---
 def get_gdrive_service(sa_key_string: str):
     """
-    Crea un servizio autenticato per Google Drive usando la stringa della chiave JSON,
-    convertendola in un file binario in-memory per la massima compatibilità.
+    Crea un servizio autenticato per Google Drive usando la stringa JSON della chiave.
+    Questo è il metodo standard e corretto.
     """
     try:
-        # 1. Converte la stringa della chiave JSON in bytes
-        sa_key_bytes = sa_key_string.encode('utf-8')
-        
-        # 2. Crea un "file binario virtuale" in memoria (un seekable bit stream)
-        creds_file_bytes = io.BytesIO(sa_key_bytes)
-        
-        # 3. Usa il metodo 'from_service_account_file' che è progettato
-        #    per leggere da oggetti simili a file, come quello che abbiamo creato.
-        creds = service_account.Credentials.from_service_account_file(creds_file_bytes)
-        
+        # Carica le credenziali direttamente dalla stringa JSON nel dizionario Python
+        creds_info = json.loads(sa_key_string)
+        # Crea l'oggetto credenziali dal dizionario
+        creds = service_account.Credentials.from_service_account_info(creds_info)
+        # Costruisce il servizio
         service = build('drive', 'v3', credentials=creds, cache_discovery=False)
-        print("Servizio Google Drive autenticato con successo (Metodo File-in-Memory).")
+        print("Servizio Google Drive autenticato con successo.")
         return service
     except Exception as e:
         print(f"Errore fatale durante l'autenticazione a Google Drive: {e}")
         raise
-# --- FINE DELLA NUOVA VERSIONE ---
+# --- FINE DEL RIPRISTINO ---
 
 
 def _execute_with_retry(request, retries=5, backoff_factor=2):
