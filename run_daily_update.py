@@ -42,7 +42,7 @@ if __name__ == "__main__":
         if daily_delta_df is not None and not daily_delta_df.empty:
             print("Dati incrementali trovati. Unisco con lo storico...")
             updated_history_df = pd.concat(
-                [raw_history_df, daily_delta_df], 
+                [raw_history_df, daily_delta_df],
                 ignore_index=True
             ).drop_duplicates(subset=['date', 'ticker'], keep='last').sort_values('date')
             print("Unione dati completata.")
