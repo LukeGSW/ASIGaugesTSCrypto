@@ -35,41 +35,41 @@ if __name__ == "__main__":
 
         # Sostituisci il blocco if/for esistente con questo
         if daily_delta_dict:
-    print("Dati incrementali trovati. Eseguo unione nel dizionario...")
-    for ticker, delta_df in daily_delta_dict.items():
-        if ticker in historical_data_dict:
-            hist_df = historical_data_dict[ticker]
-            
-            # --- INIZIO DELLA SOLUZIONE ROBUSTA ---
-            
-            # 1. ASSICURA L'UNICITÀ DELLO STORICO: Questo è il passo chiave mancante.
-            #    Controlla se l'indice del DataFrame storico ha duplicati e, in caso, li rimuove.
-            if not hist_df.index.is_unique:
-                print(f"  - ATTENZIONE: Trovato e rimosso indice duplicato nello storico per {ticker}.")
-                hist_df = hist_df[~hist_df.index.duplicated(keep='last')]
-
-            # 2. ASSICURA L'UNICITÀ DEL DELTA (doppia sicurezza, anche se improbabile dall'API).
-            if not delta_df.index.is_unique:
-                delta_df = delta_df[~delta_df.index.duplicated(keep='last')]
-            
-            # 3. Rimuovi dallo storico (ora pulito) le righe le cui date sono presenti nel nuovo delta.
-            hist_df_cleaned = hist_df.drop(delta_df.index, errors='ignore')
-            
-            # 4. Concatena in sicurezza. Ora entrambi i DataFrame hanno indici unici e non sovrapposti.
-            combined_df = pd.concat([hist_df_cleaned, delta_df])
-            
-            # 5. Ordina l'indice per mantenere la cronologia corretta.
-            combined_df.sort_index(inplace=True)
-            
-            historical_data_dict[ticker] = combined_df
-            # --- FINE DELLA SOLUZIONE ROBUSTA ---
-
+            print("Dati incrementali trovati. Eseguo unione nel dizionario...")
+            for ticker, delta_df in daily_delta_dict.items():
+                if ticker in historical_data_dict:
+                    hist_df = historical_data_dict[ticker]
+                    
+                    # --- INIZIO DELLA SOLUZIONE ROBUSTA ---
+                    
+                    # 1. ASSICURA L'UNICITÀ DELLO STORICO: Questo è il passo chiave mancante.
+                    #    Controlla se l'indice del DataFrame storico ha duplicati e, in caso, li rimuove.
+                    if not hist_df.index.is_unique:
+                        print(f"  - ATTENZIONE: Trovato e rimosso indice duplicato nello storico per {ticker}.")
+                        hist_df = hist_df[~hist_df.index.duplicated(keep='last')]
+        
+                    # 2. ASSICURA L'UNICITÀ DEL DELTA (doppia sicurezza, anche se improbabile dall'API).
+                    if not delta_df.index.is_unique:
+                        delta_df = delta_df[~delta_df.index.duplicated(keep='last')]
+                    
+                    # 3. Rimuovi dallo storico (ora pulito) le righe le cui date sono presenti nel nuovo delta.
+                    hist_df_cleaned = hist_df.drop(delta_df.index, errors='ignore')
+                    
+                    # 4. Concatena in sicurezza. Ora entrambi i DataFrame hanno indici unici e non sovrapposti.
+                    combined_df = pd.concat([hist_df_cleaned, delta_df])
+                    
+                    # 5. Ordina l'indice per mantenere la cronologia corretta.
+                    combined_df.sort_index(inplace=True)
+                    
+                    historical_data_dict[ticker] = combined_df
+                    # --- FINE DELLA SOLUZIONE ROBUSTA ---
+        
+                else:
+                    # Se il ticker è nuovo, aggiungilo semplicemente.
+                    historical_data_dict[ticker] = delta_df
+                    
+            print("Unione nel dizionario completata.")
         else:
-            # Se il ticker è nuovo, aggiungilo semplicemente.
-            historical_data_dict[ticker] = delta_df
-            
-    print("Unione nel dizionario completata.")
-else:
     print("Nessun nuovo dato dall'API.")
 
         full_df_for_baskets = pd.concat(historical_data_dict.values()).reset_index()
