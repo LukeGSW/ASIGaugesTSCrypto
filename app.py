@@ -1,18 +1,18 @@
-# app.py
+# app.py (VERSIONE FINALE CON PATCH DI SICUREZZA)
 
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import traceback # <-- Assicurati che questo import sia presente
 
-# Importiamo le nostre funzioni dai moduli che abbiamo creato
-from src.data_loader import load_production_asi # MODIFICATO: Usiamo il loader reale
+# Importiamo le nostre funzioni dai moduli
+from src.data_loader import load_production_asi
 from src.asi_indicator_calculator import calculate_asi_indicators
 from src.rule_engine import get_boost_ts1, get_boost_ts2
 
 # --- CONFIGURAZIONE PAGINA ---
 st.set_page_config(page_title="Kriterion Quant - Allocatore di Capitale", page_icon="🤖", layout="wide")
 
-# (La funzione create_gauge_chart rimane identica a prima)
 def create_gauge_chart(boost_level: str, amount: str, title: str) -> go.Figure:
     numeric_value = int(amount.replace(',', '').replace(' USD', ''))
     color_map = {"Low": "#d9534f", "Standard": "#f0ad4e", "High": "#5cb85c"}
@@ -37,16 +37,40 @@ st.title("🤖 Kriterion Quant - Cruscotto Allocazione Capitale")
 st.markdown("---")
 
 # --- LOGICA DI ORCHESTRAZIONE ---
-# 1. Carica i dati REALI da Google Drive
 data_container = st.empty()
-data_container.info("Caricamento dati di produzione in corso da Google Drive...")
-asi_df = load_production_asi()
+with data_container.container():
+    st.info("Caricamento dati di produzione in corso da Google Drive...")
+    asi_df = load_production_asi()
 
-if asi_df is None:
-    data_container.error("Caricamento dati fallito. Controllare lo stato della pipeline dati (GitHub Actions) e la configurazione dei secrets.")
-    st.stop()
-else:
-    data_container.success(f"Dati caricati con successo. Ultimo aggiornamento: {asi_df.index.max().strftime('%Y-%m-%d')}")
+    # --- INIZIO DELLA PATCH DI SICUREZZA ---
+    # Controlliamo lo stato del DataFrame caricato prima di usarlo.
+    if asi_df is None or asi_df.empty:
+        st.error("Caricamento dati fallito o dati non disponibili. Controllare lo stato della pipeline dati.")
+        st.stop()
+    
+    # Forziamo la conversione dell'indice in DatetimeIndex
+    # Questo blocco risolve l'AttributeError
+    try:
+        # Questo codice gestisce i casi in cui la data sia l'indice o una colonna.
+        if not isinstance(asi_df.index, pd.DatetimeIndex):
+            if 'date' in asi_df.columns:
+                asi_df['date'] = pd.to_datetime(asi_df['date'])
+                asi_df = asi_df.set_index('date')
+            # Se la colonna 'date' non esiste, proviamo a usare l'indice
+            else: 
+                asi_df.index = pd.to_datetime(asi_df.index)
+        
+        asi_df.sort_index(inplace=True)
+
+        # Ora possiamo usare l'indice con la certezza che sia una data
+        last_update_str = asi_df.index.max().strftime('%Y-%m-%d')
+        st.success(f"Dati caricati con successo. Ultimo aggiornamento: {last_update_str}")
+
+    except Exception as e:
+        st.error(f"Errore nella formattazione dei dati caricati: {e}")
+        st.code(traceback.format_exc())
+        st.stop()
+    # --- FINE DELLA PATCH DI SICUREZZA ---
 
 # 2. Esegui i calcoli
 indicators_df = calculate_asi_indicators(asi_df)
@@ -54,10 +78,21 @@ latest_data = indicators_df.iloc[-1]
 level_ts1, amount_ts1, rule_id_ts1 = get_boost_ts1(latest_data)
 level_ts2, amount_ts2, rule_id_ts2 = get_boost_ts2(latest_data)
 
-# (La parte di visualizzazione dei gauge e delle regole rimane identica a prima)
-# ... [CODICE GAUGE E REGOLE QUI] ...
+# --- VISUALIZZAZIONE GAUGE ---
+st.subheader("Allocazione Attuale per Trading System")
+col1, col2 = st.columns(2)
+with col1:
+    gauge1 = create_gauge_chart(level_ts1, amount_ts1, "Trading System 1")
+    st.plotly_chart(gauge1, use_container_width=True)
+    st.info(f"Regola Attiva: **{rule_id_ts1}**")
 
-# --- GRAFICI STORICI (NUOVA SEZIONE CON TAB) ---
+with col2:
+    gauge2 = create_gauge_chart(level_ts2, amount_ts2, "Trading System 2")
+    st.plotly_chart(gauge2, use_container_width=True)
+    st.info(f"Regola Attiva: **{rule_id_ts2}**")
+
+
+# --- GRAFICI STORICI ---
 st.markdown("---")
 st.subheader("Analisi Storica degli Indicatori")
 
