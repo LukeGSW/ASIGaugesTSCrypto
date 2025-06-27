@@ -3,7 +3,7 @@
 import pandas as pd
 import requests
 import numpy as np
-import time  # <-- ECCO LA RIGA MANCANTE
+import time
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
@@ -18,12 +18,32 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[pd.DataFrame
         url = f"https://eodhd.com/api/eod/{ticker}?api_token={api_key}&from={start_date}&to={end_date}&fmt=json&period=d"
         try:
             r = requests.get(url, timeout=30)
-            if r.status_code == 200:
-                data = r.json()
-                if data:
-                    df = pd.DataFrame(data)
-                    df['ticker'] = ticker
-                    all_deltas.append(df)
+            r.raise_for_status() # Controlla se ci sono errori HTTP (es. 404, 500)
+            data = r.json()
+            if data:
+                df = pd.DataFrame(data)
+
+                # --- INIZIO DELLA CORREZIONE ---
+
+                # 1. Standardizza la colonna 'close', dando priorità ad 'adjusted_close'.
+                #    Questo previene la duplicazione della colonna 'close'.
+                if 'adjusted_close' in df.columns:
+                    df['close'] = df['adjusted_close']
+
+                # 2. Definisci le colonne essenziali e assicurati che esistano.
+                required_cols = ['date', 'close', 'volume']
+                if not all(col in df.columns for col in required_cols):
+                    print(f"Attenzione: Dati essenziali mancanti per {ticker}. Salto.")
+                    continue
+
+                # 3. Seleziona solo le colonne necessarie per mantenere la coerenza.
+                #    Aggiungi il ticker e appenndi il DataFrame pulito alla lista.
+                clean_df = df[required_cols].copy()
+                clean_df['ticker'] = ticker
+                all_deltas.append(clean_df)
+
+                # --- FINE DELLA CORREZIONE ---
+
         except requests.exceptions.RequestException as e:
             print(f"Attenzione: Impossibile scaricare l'aggiornamento per {ticker}. Errore: {e}")
             continue
@@ -31,17 +51,14 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[pd.DataFrame
         time.sleep(0.1) 
 
     if not all_deltas:
+        print("Nessun dato delta è stato scaricato.")
         return None
         
+    # Ora la concatenazione è sicura perché tutti i DataFrame hanno la stessa struttura
     delta_df = pd.concat(all_deltas, ignore_index=True)
-    # Assicurati che le colonne corrispondano al formato storico
-    if 'adjusted_close' in delta_df.columns:
-        delta_df = delta_df.rename(columns={'adjusted_close': 'close'})
     delta_df['date'] = pd.to_datetime(delta_df['date'])
     
-    # Selezioniamo solo le colonne che ci servono per mantenere la coerenza
-    required_cols = ['date', 'close', 'volume', 'ticker']
-    return delta_df[[col for col in required_cols if col in delta_df.columns]]
+    return delta_df
 
 # Il resto del file (create_dynamic_baskets, calculate_full_asi) rimane identico
 def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int = 30, rebalancing_freq: str = '90D') -> Dict:
