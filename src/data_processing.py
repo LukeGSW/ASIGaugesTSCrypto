@@ -62,38 +62,31 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[pd.DataFrame
 
 # In src/data_processing.py
 
+# Versione finale di produzione
 def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int = 30, rebalancing_freq: str = '90D') -> Dict:
-    print("--- Inizio creazione panieri dinamici con debug ---")
     if df.empty:
-        print("!!! DataFrame di input è vuoto. Impossibile creare panieri. !!!")
         return {}
-    
-    # Assicuriamoci che la colonna volume sia numerica, convertendo errori in NaN e poi riempiendo con 0
+        
     df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
-    
     df_with_dates = df.set_index('date')
+    
     start_date = df_with_dates.index.min()
     end_date = df_with_dates.index.max()
     rebalancing_dates = pd.date_range(start=start_date, end=end_date, freq=rebalancing_freq)
     
     baskets = {}
-    btc_ticker = next((t for t in df['ticker'].unique() if 'BTC' in t), None)
-    
-    # Debuggheremo solo la prima data di rebalancing per non intasare i log
-    first_run = True
+    btc_ticker = next((t for t in df['ticker'].unique() if 'BTC-USD.CC' in t), None)
 
     for reb_date in rebalancing_dates:
         lookback_start = reb_date - pd.Timedelta(days=lookback_days)
         volume_period_df = df_with_dates.loc[lookback_start:reb_date]
         
         if volume_period_df.empty:
-            if first_run:
-                print(f"DEBUG ({reb_date.date()}): Nessun dato nel periodo di lookback. Salto.")
             continue
-        
+            
         total_volume = volume_period_df.groupby('ticker')['volume'].sum()
         
-        # Escludiamo BTC se trovato
+        # Esclude BTC se trovato
         if btc_ticker and btc_ticker in total_volume.index:
             altcoin_volumes = total_volume.drop(btc_ticker)
         else:
@@ -101,28 +94,12 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
             
         top_altcoins = altcoin_volumes.nlargest(top_n)
         
-        if first_run:
-            print(f"--- DEBUG per il primo paniere (Data: {reb_date.date()}) ---")
-            print(f"Numero totale di ticker con volume in questo periodo: {len(total_volume)}")
-            print(f"Ticker di BTC da escludere: {btc_ticker}")
-            print(f"Numero di altcoin con volume > 0: {len(altcoin_volumes)}")
-            print(f"Numero di altcoin selezionate nel paniere: {len(top_altcoins)}")
-            
-            if not top_altcoins.empty:
-                print("Prime 5 altcoin per volume:")
-                print(top_altcoins.head(5))
-            else:
-                print("!!! ATTENZIONE: 'top_altcoins' è vuoto. Nessuna altcoin selezionata. Controllare i dati di volume. !!!")
-                # Stampiamo i volumi totali per capire perché non seleziona nulla
-                print("Primi 10 volumi totali (inclusi altcoin e BTC se presente):")
-                print(total_volume.sort_values(ascending=False).head(10))
-
-            print("--------------------------------------------------")
-            first_run = False # Disattiva il debug per le iterazioni successive
-
-        baskets[reb_date] = top_altcoins.index.tolist()
-        
-    print(f"--- Creazione panieri completata. Creati {len(baskets)} panieri. ---")
+        # --- CORREZIONE FINALE ---
+        # Aggiungiamo il paniere al dizionario SOLO se contiene effettivamente delle altcoin.
+        if not top_altcoins.empty:
+            baskets[reb_date] = top_altcoins.index.tolist()
+        # --- FINE CORREZIONE ---
+                
     return baskets
 
 def calculate_full_asi(df: pd.DataFrame, baskets: Dict, performance_window: int = 90) -> pd.DataFrame:
