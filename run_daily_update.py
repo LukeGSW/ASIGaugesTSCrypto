@@ -78,7 +78,8 @@ if __name__ == "__main__":
         # --- FINE BLOCCO DI ISPEZIONE ---
 
         print("Inizio generazione panieri dinamici...")
-        dynamic_baskets = dp.create_dynamic_baskets(updated_history_df)
+        dynamic_baskets = dp.create_dynamic_baskets(updated_history_df, performance_window=90)
+
 
         print("Inizio calcolo Altcoin Season Index...")
         final_asi_df = dp.calculate_full_asi(updated_history_df, dynamic_baskets)
