@@ -29,5 +29,5 @@ jobs:
           # Passiamo l'intero JSON come una singola variabile d'ambiente
           GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
           EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
-        run: python add_missing_ticker.py
+        run: python run_full_refresh.py
 
