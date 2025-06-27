@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import traceback
 from src.gdrive_service import get_gdrive_service, find_id, upload_or_update_parquet, download_all_parquets_in_folder
 import src.data_processing as dp
 
@@ -33,47 +34,50 @@ if __name__ == "__main__":
         tickers_list = list(historical_data_dict.keys())
         daily_delta_dict = dp.fetch_daily_delta(tickers_list, EODHD_API_KEY)
 
-        # --- BLOCCO DI UNIONE DATI CON CORREZIONE APPLICATA ---
         if daily_delta_dict:
             print("Dati incrementali trovati. Eseguo unione nel dizionario...")
             for ticker, delta_df in daily_delta_dict.items():
                 if ticker in historical_data_dict:
                     hist_df = historical_data_dict[ticker]
                     
-                    # 1. Assicura che l'indice del DataFrame storico sia unico PRIMA di ogni altra operazione.
-                    if not hist_df.index.is_unique:
-                        print(f"  - ATTENZIONE: Trovato e rimosso indice duplicato nello storico per {ticker}.")
-                        hist_df = hist_df[~hist_df.index.duplicated(keep='last')]
-
-                    # 2. Assicura (per sicurezza) che anche il delta sia unico.
-                    if not delta_df.index.is_unique:
-                        delta_df = delta_df[~delta_df.index.duplicated(keep='last')]
+                    # --- INIZIO SOLUZIONE ROBUSTA (APPROCCIO RESET INDEX) ---
                     
-                    # 3. Rimuovi dallo storico le righe le cui date sono già presenti nel nuovo delta.
-                    hist_df_cleaned = hist_df.drop(delta_df.index, errors='ignore')
+                    # 1. Resetta l'indice di entrambi i DataFrame, 'date' diventa una colonna.
+                    hist_df_reset = hist_df.reset_index()
+                    delta_df_reset = delta_df.reset_index()
                     
-                    # 4. Concatena il vecchio dataframe (pulito) con il nuovo.
-                    combined_df = pd.concat([hist_df_cleaned, delta_df])
+                    # 2. Concatena usando l'indice numerico di default. Questo non può fallire.
+                    combined_df = pd.concat([hist_df_reset, delta_df_reset], ignore_index=True)
                     
-                    # 5. Ordina l'indice per mantenere la cronologia.
+                    # 3. Rimuovi i duplicati basandoti sulla colonna 'date', tenendo l'ultimo valore (dal delta).
+                    combined_df.drop_duplicates(subset=['date'], keep='last', inplace=True)
+                    
+                    # 4. Reimposta 'date' come indice e ordina.
+                    combined_df.set_index('date', inplace=True)
                     combined_df.sort_index(inplace=True)
                     
                     historical_data_dict[ticker] = combined_df
+                    # --- FINE SOLUZIONE ROBUSTA ---
+
                 else:
-                    # Se il ticker è nuovo, aggiungilo semplicemente.
                     historical_data_dict[ticker] = delta_df
-            
             print("Unione nel dizionario completata.")
         else:
             print("Nessun nuovo dato dall'API.")
+        
+        # --- BLOCCO SUCCESSIVO (INVARIATO) ---
+        
+        # Aggiungo un ticker_map per associare correttamente i ticker ai dati
+        ticker_map = {i: ticker for i, ticker in enumerate(historical_data_dict.keys())}
+        # Prepara una lista di dataframe dove ogni df ha la colonna ticker
+        df_list_for_concat = []
+        for ticker, df in historical_data_dict.items():
+            df_copy = df.copy()
+            df_copy['ticker'] = ticker
+            df_list_for_concat.append(df_copy)
 
-        # Concatena tutti i dati aggiornati in un unico DataFrame per la funzione dei panieri
-        full_df_for_baskets = pd.concat(historical_data_dict.values()).reset_index()
-        # Aggiungi una colonna 'ticker' se non è già presente, derivandola dal nome del file
-        # Questo passo è cruciale se i DataFrame individuali non hanno la colonna 'ticker'
-        if 'ticker' not in full_df_for_baskets.columns:
-            full_df_for_baskets['ticker'] = pd.concat([pd.Series(ticker, index=df.index) for ticker, df in historical_data_dict.items()]).values
-
+        full_df_for_baskets = pd.concat(df_list_for_concat).reset_index()
+        
         print("Inizio generazione panieri dinamici...")
         dynamic_baskets = dp.create_dynamic_baskets(full_df_for_baskets)
         print(f"Generati {len(dynamic_baskets)} panieri.")
@@ -92,6 +96,5 @@ if __name__ == "__main__":
 
     except Exception as e:
         print(f"!!! ERRORE CRITICO DURANTE L'ESECUZIONE: {e}")
-        import traceback
         traceback.print_exc()
         raise
