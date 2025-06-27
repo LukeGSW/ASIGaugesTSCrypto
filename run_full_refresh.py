@@ -68,21 +68,10 @@ def fetch_full_history_for_ticker(ticker: str, api_key: str) -> Optional[pd.Data
         print(f"  - ERRORE API durante il download di {ticker}: {e}")
         return None
 
-if __name__ == "__main__":
-    print(">>> Inizio processo di REFRESH COMPLETO dei dati storici su Google Drive...")
-    
-    if not all([EODHD_API_KEY, GDRIVE_SA_KEY]):
-        raise ValueError("Errore: mancano le variabili d'ambiente.")
+# in run_full_refresh.py
 
-    gdrive_service = get_gdrive_service(GDRIVE_SA_KEY)
-    
-    print("Ricerca cartelle su Google Drive...")
-    root_folder_id = find_id(gdrive_service, name=ROOT_FOLDER_NAME, mime_type='application/vnd.google-apps.folder')
-    if not root_folder_id: raise FileNotFoundError(f"'{ROOT_FOLDER_NAME}' non trovata.")
-        
-    raw_history_folder_id = find_id(gdrive_service, name=RAW_HISTORY_FOLDER_NAME, parent_id=root_folder_id, mime_type='application/vnd.google-apps.folder')
-    if not raw_history_folder_id: raise FileNotFoundError(f"'{RAW_HISTORY_FOLDER_NAME}' non trovata.")
-    print("Cartelle trovate con successo.")
+if __name__ == "__main__":
+    # ... (codice iniziale invariato) ...
 
     all_tickers = get_all_tickers(EODHD_API_KEY, CRYPTO_EXCHANGE_CODE)
     total_tickers = len(all_tickers)
@@ -94,6 +83,13 @@ if __name__ == "__main__":
             history_df = fetch_full_history_for_ticker(ticker, EODHD_API_KEY)
             
             if history_df is not None and not history_df.empty:
+                # --- INIZIO DELLA CORREZIONE ---
+                # Assicura che la colonna 'date' sia in formato datetime prima di salvarla
+                history_df['date'] = pd.to_datetime(history_df['date'])
+                # Imposta la data come indice per una migliore performance
+                history_df = history_df.set_index('date')
+                # --- FINE DELLA CORREZIONE ---
+                
                 file_name = f"{ticker}.parquet"
                 upload_or_update_parquet(gdrive_service, history_df, file_name, raw_history_folder_id)
             else:
