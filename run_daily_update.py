@@ -39,15 +39,7 @@ if __name__ == "__main__":
             for ticker, delta_df in daily_delta_dict.items():
                 if ticker in historical_data_dict:
                     hist_df = historical_data_dict[ticker]
-                                # --- INIZIO BLOCCO DI DEBUG (TEMPORANEO) ---
-                    print("\n" + "-"*10 + f" DEBUGGING: {ticker} " + "-"*10)
-                    print(f"Colonne dello storico (hist_df): {hist_df.columns.to_list()}")
-                    print(f"Indice colonne è unico? {hist_df.columns.is_unique}")
-                    print(f"Colonne del delta (delta_df): {delta_df.columns.to_list()}")
-                    print(f"Indice colonne è unico? {delta_df.columns.is_unique}")
-                    print("-"*(22 + len(ticker)) + "\n")
-            # --- FINE BLOCCO DI DEBUG ---
-                    # --- INIZIO SOLUZIONE ROBUSTA (APPROCCIO RESET INDEX) ---
+
                     
                     # 1. Resetta l'indice di entrambi i DataFrame, 'date' diventa una colonna.
                     hist_df_reset = hist_df.reset_index()
