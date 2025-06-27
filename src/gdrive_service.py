@@ -13,32 +13,24 @@ from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 from googleapiclient.errors import HttpError
 
 # --- FUNZIONE DI AUTENTICAZIONE CON PATCH DEFINITIVA ---
+# Assicurati che la funzione get_gdrive_service sia questa:
+
 def get_gdrive_service(sa_key_string: str):
     """
-    Crea un servizio autenticato, applicando una patch per un bug
-    nella libreria google-auth che non gestisce correttamente il formato della chiave privata.
+    Crea un servizio autenticato per Google Drive usando la stringa JSON della chiave.
+    Questo è il metodo standard e corretto.
     """
     try:
-        # Carica le credenziali dalla stringa JSON in un dizionario Python
         creds_info = json.loads(sa_key_string)
-
-        # --- INIZIO DELLA CORREZIONE DEFINITIVA ---
-        # Convertiamo manualmente la chiave privata da stringa a bytes.
-        # Questo è necessario perché la libreria google-auth ha un bug/incompatibilità
-        # e non esegue questa conversione fondamentale da sola.
-        creds_info['private_key'] = creds_info['private_key'].encode('utf-8')
-        # --- FINE DELLA CORREZIONE DEFINITIVA ---
-
-        # Passiamo il dizionario corretto alla funzione di creazione delle credenziali
         creds = service_account.Credentials.from_service_account_info(creds_info)
-        
-        # Costruisce il servizio
         service = build('drive', 'v3', credentials=creds, cache_discovery=False)
-        print("Servizio Google Drive autenticato con successo (con patch per bug).")
+        print("Servizio Google Drive autenticato con successo.")
         return service
     except Exception as e:
         print(f"Errore fatale durante l'autenticazione a Google Drive: {e}")
         raise
+
+# ... (il resto del file gdrive_service.py rimane invariato) ...
 # --- FINE DELLA FUNZIONE CON PATCH ---
 
 
