@@ -1,4 +1,4 @@
-# src/data_processing.py
+# src/data_processing.py (VERSIONE DI PRODUZIONE FINALE)
 
 import pandas as pd
 import requests
@@ -12,7 +12,7 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[pd.DataFrame
     print(f"Scaricamento aggiornamenti per {len(tickers)} tickers...")
     all_deltas = []
     end_date = datetime.utcnow().date()
-    start_date = end_date - timedelta(days=3)
+    start_date = end_date - timedelta(days=4) # Prendiamo un giorno in più per sicurezza
     
     for ticker in tickers:
         url = f"https://eodhd.com/api/eod/{ticker}?api_token={api_key}&from={start_date}&to={end_date}&fmt=json&period=d"
@@ -41,6 +41,7 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[pd.DataFrame
     return delta_df[[col for col in required_cols if col in delta_df.columns]]
 
 def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int = 30, rebalancing_freq: str = '90D', performance_window: int = 90) -> Dict:
+    """Crea i panieri dinamici basati sul volume e sullo storico disponibile."""
     if df.empty:
         return {}
         
@@ -82,63 +83,70 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
     return baskets
 
 def calculate_full_asi(df: pd.DataFrame, baskets: Dict, performance_window: int = 90) -> pd.DataFrame:
+    """
+    Calcola l'Altcoin Season Index usando un approccio basato su pivot, più robusto e corretto.
+    """
     if df.empty or not baskets:
         return pd.DataFrame()
 
-    df_with_dates = df.set_index('date')
     btc_ticker = next((t for t in df['ticker'].unique() if 'BTC-USD.CC' in t), None)
-    if not btc_ticker: raise ValueError("Ticker di Bitcoin non trovato.")
+    if not btc_ticker: raise ValueError("Ticker di Bitcoin non trovato nel dataset.")
+
+    print("  - [ASI Calc] Calcolo performance per tutti i ticker...")
+    # Lavoriamo con la struttura dati "long" originale
+    df['performance'] = df.groupby('ticker')['close'].pct_change(periods=performance_window)
     
-    all_perf = df_with_dates.groupby('ticker')['close'].pct_change(periods=performance_window)
-    btc_perf = all_perf[df_with_dates['ticker'] == btc_ticker]
-    alt_perf = all_perf[df_with_dates['ticker'] != btc_ticker]
+    print("  - [ASI Calc] Creazione tabella pivot delle performance...")
+    # Creiamo una tabella "wide" dove le righe sono date e le colonne sono i ticker.
+    # Questo risolve tutti i problemi di indicizzazione.
+    perf_pivot_df = df.pivot_table(index='date', columns='ticker', values='performance')
     
-    all_dates = df_with_dates.index.unique().sort_values()
     rebalancing_dates = sorted(baskets.keys())
     
+    # La prima data possibile per una valutazione è la prima data di rebalancing + la finestra di performance
+    start_eval_date = rebalancing_dates[0] + timedelta(days=performance_window)
+    
     asi_results = []
-    
-    start_eval_date = all_dates.min() + timedelta(days=performance_window)
-    
-    for eval_date in all_dates[all_dates >= start_eval_date]:
+
+    print(f"  - [ASI Calc] Inizio ciclo di valutazione da {start_eval_date.strftime('%Y-%m-%d')}...")
+    # Iteriamo su tutte le date presenti nella tabella pivot
+    for eval_date in perf_pivot_df.index:
+        if eval_date < start_eval_date:
+            continue
+
+        # Trova il paniere corretto per la data di valutazione
         active_basket_date = next((rd for rd in reversed(rebalancing_dates) if rd <= eval_date), None)
         if not active_basket_date: 
             continue
-            
-        active_basket = baskets[active_basket_date]
-        try:
-            current_btc_perf = btc_perf.loc[eval_date]
-            current_alt_perf_series = alt_perf.loc[eval_date]
-        except KeyError:
-            continue
-            
-        if pd.isna(current_btc_perf):
-            continue
-            
-        outperforming_count = 0
-        valid_alts_in_basket = 0
-        for alt in active_basket:
-            if alt not in current_alt_perf_series.index: continue
-            
-            perf = current_alt_perf_series.loc[alt]
-            if not pd.isna(perf):
-                valid_alts_in_basket += 1
-                if perf > current_btc_perf:
-                    outperforming_count += 1
         
-        if valid_alts_in_basket > 0:
-            index_value = (outperforming_count / valid_alts_in_basket) * 100
-            asi_results.append({
-                'date': eval_date,
-                'index_value': index_value,
-                'outperforming_count': outperforming_count,
-                'basket_size': valid_alts_in_basket
-            })
+        active_basket = baskets[active_basket_date]
+        
+        # Estrai le performance del giorno dalla tabella pivot
+        btc_perf = perf_pivot_df.at[eval_date, btc_ticker]
+        
+        # Se BTC non ha una performance valida per quel giorno, saltiamo
+        if pd.isna(btc_perf):
+            continue
+
+        # Estrai le performance delle altcoin nel paniere attivo
+        alt_performances = perf_pivot_df.loc[eval_date, active_basket].dropna()
+        
+        if alt_performances.empty:
+            continue
+
+        outperforming_count = (alt_performances > btc_perf).sum()
+        valid_alts_in_basket = len(alt_performances)
+        
+        index_value = (outperforming_count / valid_alts_in_basket) * 100
+        asi_results.append({
+            'date': eval_date,
+            'index_value': index_value,
+            'outperforming_count': outperforming_count,
+            'basket_size': valid_alts_in_basket
+        })
 
     if not asi_results: 
         return pd.DataFrame()
         
     final_df = pd.DataFrame(asi_results).set_index('date')
-    # Assicurati che l'indice sia univoco prima di salvare
-    final_df = final_df[~final_df.index.duplicated(keep='last')]
     return final_df
