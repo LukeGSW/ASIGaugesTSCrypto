@@ -71,6 +71,15 @@ if __name__ == "__main__":
 
         print("Inizio calcolo Altcoin Season Index...")
         final_asi_df = dp.calculate_full_asi(updated_history_df, dynamic_baskets)
+        # --- BLOCCO DI DEBUG PER IL BACKEND ---
+        print("Debug del risultato del calcolo ASI:")
+        if final_asi_df.empty:
+            print("!!! ATTENZIONE: Il DataFrame 'final_asi_df' è VUOTO dopo il calcolo. !!!")
+            print(f"Numero di panieri passati alla funzione: {len(dynamic_baskets)}")
+            print(f"Shape del DataFrame 'updated_history_df' passato alla funzione: {updated_history_df.shape}")
+        else:
+            print(f"OK: Il DataFrame 'final_asi_df' contiene {len(final_asi_df)} righe di dati.")
+        # --- FINE BLOCCO DI DEBUG ---
         print("Calcolo ASI completato.")
 
         upload_or_update_parquet(gdrive_service, final_asi_df, PRODUCTION_FILE_NAME, production_folder_id)
