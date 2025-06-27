@@ -9,7 +9,7 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[Dict[str, pd
     print(f"Scaricamento aggiornamenti per {len(tickers)} tickers...")
     delta_dict = {}
     end_date = datetime.utcnow().date()
-    start_date = end_date - timedelta(days=5)
+    start_date = end_date - timedelta(days=5) # Lookback di 5 giorni per sicurezza
     
     for ticker in tickers:
         url = f"https://eodhd.com/api/eod/{ticker}?api_token={api_key}&from={start_date}&to={end_date}&fmt=json&period=d"
@@ -19,15 +19,33 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[Dict[str, pd
                 data = r.json()
                 if data:
                     df = pd.DataFrame(data)
-                    if 'adjusted_close' in df.columns:
-                        df = df.rename(columns={'adjusted_close': 'close'})
                     
-                    df.dropna(subset=['date', 'close', 'volume'], inplace=True)
-                    if not df.empty:
-                        df['date'] = pd.to_datetime(df['date'])
-                        df.set_index('date', inplace=True)
-                        delta_dict[ticker] = df[['close', 'volume']]
-        except requests.exceptions.RequestException:
+                    # --- INIZIO DELLA SOLUZIONE ---
+                    # 1. Prioritizza 'adjusted_close' e rinominalo in 'close'.
+                    #    Se non esiste, il 'close' originale verrà usato.
+                    if 'adjusted_close' in df.columns:
+                        df['close'] = df['adjusted_close']
+                    
+                    # 2. Seleziona esplicitamente un set di colonne univoche.
+                    #    Questo elimina automaticamente qualsiasi colonna duplicata ('close' originale) o non necessaria.
+                    required_cols = ['date', 'close', 'volume']
+                    
+                    # Controlla se le colonne necessarie esistono prima di procedere
+                    if not all(col in df.columns for col in required_cols):
+                        print(f"  - Dati incompleti per {ticker}. Salto.")
+                        continue
+                        
+                    final_df = df[required_cols].copy() # Usa .copy() per evitare warning
+                    # --- FINE DELLA SOLUZIONE ---
+
+                    final_df.dropna(subset=['date', 'close', 'volume'], inplace=True)
+                    if not final_df.empty:
+                        final_df['date'] = pd.to_datetime(final_df['date'])
+                        final_df.set_index('date', inplace=True)
+                        delta_dict[ticker] = final_df[['close', 'volume']] # La selezione finale avviene qui
+
+        except requests.exceptions.RequestException as e:
+            print(f"  - Errore API per {ticker}: {e}. Salto.")
             continue
         time.sleep(0.1)
 
