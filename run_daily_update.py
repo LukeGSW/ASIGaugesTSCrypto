@@ -1,7 +1,6 @@
 # run_daily_update.py
 
 import os
-import pandas as pd
 from src.gdrive_service import get_gdrive_service, find_id, upload_or_update_parquet, download_all_parquets_in_folder
 import src.data_processing as dp
 
@@ -29,45 +28,46 @@ if __name__ == "__main__":
         production_folder_id = find_id(gdrive_service, name=PRODUCTION_FOLDER_NAME, parent_id=root_folder_id, mime_type='application/vnd.google-apps.folder')
         print("Cartelle trovate con successo.")
 
-        raw_history_df = download_all_parquets_in_folder(gdrive_service, raw_history_folder_id)
-        
-        # --- LA MODIFICA CHIAVE, PARTE 1: PULIZIA RADICALE ALLA FONTE ---
-        # Rimuoviamo qualsiasi riga con valori mancanti nelle colonne essenziali.
-        raw_history_df.dropna(subset=['date', 'ticker', 'close', 'volume'], inplace=True)
-        print(f"Dati storici caricati e puliti radicalmente: {len(raw_history_df)} righe.")
-        
-        tickers_list = raw_history_df['ticker'].unique().tolist()
-        daily_delta_df = dp.fetch_daily_delta(tickers_list, EODHD_API_KEY)
+        # --- FASE 1: CARICAMENTO DATI STORICI COME DIZIONARIO ---
+        historical_data_dict = download_all_parquets_in_folder(gdrive_service, raw_history_folder_id)
+        print(f"Dati storici caricati per {len(historical_data_dict)} tickers.")
 
-        if daily_delta_df is not None and not daily_delta_df.empty:
-            print("Dati incrementali trovati. Eseguo unione...")
-            
-            # --- LA MODIFICA CHIAVE, PARTE 2: PULIZIA RADICALE DEL DELTA ---
-            daily_delta_df.dropna(subset=['date', 'ticker', 'close', 'volume'], inplace=True)
-            
-            # Ora uniamo i due dataframe che sono GARANTITI essere puliti
-            combined_df = pd.concat([raw_history_df, daily_delta_df], ignore_index=True)
-            
-            # Eseguiamo un ultimo drop_duplicates per sicurezza su eventuali sovrapposizioni
-            updated_history_df = combined_df.drop_duplicates(subset=['date', 'ticker'], keep='last').sort_values('date').reset_index(drop=True)
+        # --- FASE 2: CARICAMENTO E UNIONE DATI INCREMENTALI ---
+        tickers_list = list(historical_data_dict.keys())
+        daily_delta_dict = dp.fetch_daily_delta(tickers_list, EODHD_API_KEY)
+
+        if daily_delta_dict:
+            print("Dati incrementali trovati. Eseguo unione nel dizionario...")
+            for ticker, delta_df in daily_delta_dict.items():
+                if ticker in historical_data_dict:
+                    # Concatena e rimuovi duplicati per ogni singolo ticker
+                    combined_df = pd.concat([historical_data_dict[ticker], delta_df])
+                    historical_data_dict[ticker] = combined_df[~combined_df.index.duplicated(keep='last')]
+                else:
+                    historical_data_dict[ticker] = delta_df
+            print("Unione completata.")
         else:
             print("Nessun nuovo dato dall'API.")
-            updated_history_df = raw_history_df
-
-        print(f"DataFrame finale pronto per l'analisi con {len(updated_history_df)} righe.")
         
+        # Ora 'historical_data_dict' è il nostro dataset completo e aggiornato
+        
+        # --- FASE 3: CALCOLO ---
         print("Inizio generazione panieri dinamici...")
-        dynamic_baskets = dp.create_dynamic_baskets(updated_history_df)
+        # Trasformiamo temporaneamente in DataFrame per questa funzione (più semplice)
+        full_df_for_baskets = pd.concat(historical_data_dict.values(), keys=historical_data_dict.keys(), names=['ticker', 'date']).reset_index()
+        dynamic_baskets = dp.create_dynamic_baskets(full_df_for_baskets)
         print(f"Generati {len(dynamic_baskets)} panieri.")
 
         print("Inizio calcolo Altcoin Season Index...")
-        final_asi_df = dp.calculate_full_asi(updated_history_df)
+        # La funzione di calcolo ora lavora direttamente con il dizionario
+        final_asi_df = dp.calculate_full_asi(historical_data_dict, dynamic_baskets)
         
         if final_asi_df.empty:
              print("ATTENZIONE: Il DataFrame finale dell'ASI è VUOTO.")
         
         print(f"Calcolo ASI completato. Il DataFrame finale ha {len(final_asi_df)} righe.")
         
+        # --- FASE 4: UPLOAD ---
         upload_or_update_parquet(gdrive_service, final_asi_df, PRODUCTION_FILE_NAME, production_folder_id)
 
         print("\n>>> Processo di aggiornamento quotidiano completato con successo.")
