@@ -63,45 +63,46 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[pd.DataFrame
 # In src/data_processing.py
 
 # Versione finale di produzione
+# In src/data_processing.py
+
+# Versione finale di produzione
 def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int = 30, rebalancing_freq: str = '90D') -> Dict:
     if df.empty:
         return {}
-        
+
     df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
     df_with_dates = df.set_index('date')
-    
+
     start_date = df_with_dates.index.min()
     end_date = df_with_dates.index.max()
     rebalancing_dates = pd.date_range(start=start_date, end=end_date, freq=rebalancing_freq)
-    
+
     baskets = {}
     btc_ticker = next((t for t in df['ticker'].unique() if 'BTC-USD.CC' in t), None)
 
     for reb_date in rebalancing_dates:
         lookback_start = reb_date - pd.Timedelta(days=lookback_days)
         volume_period_df = df_with_dates.loc[lookback_start:reb_date]
-        
+
         if volume_period_df.empty:
             continue
-            
+
         total_volume = volume_period_df.groupby('ticker')['volume'].sum()
-        
-        # Esclude BTC se trovato
+
         if btc_ticker and btc_ticker in total_volume.index:
             altcoin_volumes = total_volume.drop(btc_ticker)
         else:
             altcoin_volumes = total_volume
-            
+
         top_altcoins = altcoin_volumes.nlargest(top_n)
-        
-        # --- CORREZIONE FINALE ---
-        # Aggiungiamo il paniere al dizionario SOLO se contiene effettivamente delle altcoin.
+
+        # --- CORREZIONE FINALE E DECISIVA ---
+        # Aggiungiamo il paniere al dizionario SOLO se non è vuoto.
         if not top_altcoins.empty:
             baskets[reb_date] = top_altcoins.index.tolist()
         # --- FINE CORREZIONE ---
-                
-    return baskets
 
+    return baskets
 def calculate_full_asi(df: pd.DataFrame, baskets: Dict, performance_window: int = 90) -> pd.DataFrame:
     print("--- Inizio calcolo ASI con debug avanzato ---")
     df_with_dates = df.set_index('date')
