@@ -1,5 +1,3 @@
-# src/data_processing.py
-
 import pandas as pd
 import requests
 import numpy as np
@@ -8,7 +6,6 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
 def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[Dict[str, pd.DataFrame]]:
-    """Scarica gli aggiornamenti per una lista di ticker e li restituisce come dizionario."""
     print(f"Scaricamento aggiornamenti per {len(tickers)} tickers...")
     delta_dict = {}
     end_date = datetime.utcnow().date()
@@ -36,40 +33,35 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[Dict[str, pd
 
     return delta_dict if delta_dict else None
 
-def create_dynamic_baskets(data_dict: Dict[str, pd.DataFrame], top_n: int = 50, lookback_days: int = 30, rebalancing_freq: str = '90D', performance_window: int = 90) -> Dict:
-    """Crea i panieri dinamici basati sul volume e sullo storico disponibile."""
-    if not data_dict:
-        return {}
+def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int = 30, rebalancing_freq: str = '90D', performance_window: int = 90) -> Dict:
+    if df.empty: return {}
+        
+    df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
+    df_with_dates = df.set_index('date')
     
-    all_dates = pd.to_datetime(sorted(list(set(date for df in data_dict.values() for date in df.index))))
     start_date = pd.to_datetime('2017-01-01')
-    end_date = all_dates.max()
+    end_date = df_with_dates.index.max()
     rebalancing_dates = pd.date_range(start=start_date, end=end_date, freq=rebalancing_freq)
     
     baskets = {}
-    btc_ticker = next((t for t in data_dict.keys() if 'BTC-USD.CC' in t), None)
-    alt_tickers = [t for t in data_dict.keys() if t != btc_ticker]
+    btc_ticker = next((t for t in df['ticker'].unique() if 'BTC-USD.CC' in t), None)
 
     for reb_date in rebalancing_dates:
         lookback_start = reb_date - pd.Timedelta(days=lookback_days)
-        
-        altcoin_volumes = {}
-        for ticker in alt_tickers:
-            df = data_dict.get(ticker)
-            if df is None: continue
+        volume_period_df = df_with_dates.loc[lookback_start:reb_date]
+        if volume_period_df.empty: continue
             
-            volume_period_df = df.loc[lookback_start:reb_date]
-            if not volume_period_df.empty:
-                altcoin_volumes[ticker] = volume_period_df['volume'].sum()
-
-        top_by_volume = sorted(altcoin_volumes, key=altcoin_volumes.get, reverse=True)[:top_n]
+        total_volume = volume_period_df.groupby('ticker')['volume'].sum()
+        if btc_ticker and btc_ticker in total_volume.index:
+            altcoin_volumes = total_volume.drop(btc_ticker, errors='ignore')
+        else:
+            altcoin_volumes = total_volume
+            
+        top_by_volume = altcoin_volumes.nlargest(top_n)
         
         final_basket_coins = []
-        for ticker in top_by_volume:
-            df = data_dict.get(ticker)
-            if df is None: continue
-            
-            ticker_history_before_reb = df.loc[:reb_date]
+        for ticker in top_by_volume.index:
+            ticker_history_before_reb = df_with_dates.loc[df_with_dates['ticker'] == ticker].loc[:reb_date]
             if len(ticker_history_before_reb) >= performance_window:
                 final_basket_coins.append(ticker)
         
@@ -79,12 +71,10 @@ def create_dynamic_baskets(data_dict: Dict[str, pd.DataFrame], top_n: int = 50, 
     return baskets
 
 def calculate_full_asi(data_dict: Dict[str, pd.DataFrame], baskets: Dict, performance_window: int = 90) -> pd.DataFrame:
-    if not data_dict or not baskets:
-        return pd.DataFrame()
+    if not data_dict or not baskets: return pd.DataFrame()
 
     btc_ticker = next((t for t in data_dict.keys() if 'BTC-USD.CC' in t), None)
-    if not btc_ticker or btc_ticker not in data_dict:
-        raise ValueError("Dati di Bitcoin non trovati nel dizionario.")
+    if not btc_ticker or btc_ticker not in data_dict: raise ValueError("Dati di Bitcoin non trovati.")
     
     all_dates = pd.to_datetime(sorted(list(set(date for df in data_dict.values() for date in df.index))))
     rebalancing_dates = sorted(baskets.keys())
@@ -98,7 +88,7 @@ def calculate_full_asi(data_dict: Dict[str, pd.DataFrame], baskets: Dict, perfor
         active_basket_date = next((rd for rd in reversed(rebalancing_dates) if rd <= eval_date), None)
         if not active_basket_date: continue
             
-        active_basket = baskets[active_basket_date]
+        active_basket = baskets.get(active_basket_date, [])
         current_btc_perf = perf_dict[btc_ticker].get(eval_date)
         
         if pd.isna(current_btc_perf): continue
