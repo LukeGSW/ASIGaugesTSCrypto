@@ -67,17 +67,21 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[pd.DataFrame
 
 # Versione finale di produzione
 # Versione di Produzione Finale
+# Versione di Produzione Finale con Data di Inizio
 def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int = 30, rebalancing_freq: str = '90D', performance_window: int = 90) -> Dict:
-    """
-    Crea panieri di altcoin basati sul volume e su una sufficiente anzianità dello storico.
-    """
     if df.empty:
         return {}
         
     df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
     df_with_dates = df.set_index('date')
     
-    start_date = df_with_dates.index.min()
+    # --- MODIFICA FINALE E DECISIVA ---
+    # Forziamo l'analisi a partire da una data in cui il mercato era più maturo,
+    # ignorando gli anni in cui esisteva solo Bitcoin.
+    # Puoi aggiustare questa data se vuoi partire prima o dopo.
+    start_date = pd.to_datetime('2017-01-01')
+    # --- FINE MODIFICA ---
+
     end_date = df_with_dates.index.max()
     rebalancing_dates = pd.date_range(start=start_date, end=end_date, freq=rebalancing_freq)
     
@@ -100,19 +104,16 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
             
         top_by_volume = altcoin_volumes.nlargest(top_n)
         
-        # --- FILTRO FINALE E DECISIVO SULLO STORICO ---
         final_basket_coins = []
         for ticker in top_by_volume.index:
-            # Selezioniamo lo storico del ticker FINO alla data di ribilanciamento
             ticker_history = df_with_dates.loc[df_with_dates['ticker'] == ticker].loc[:reb_date]
-            # Se ha abbastanza giorni di storico per il calcolo della performance, è valido.
             if len(ticker_history) >= performance_window:
                 final_basket_coins.append(ticker)
         
         if final_basket_coins:
             baskets[reb_date] = final_basket_coins
-        # --- FINE FILTRO ---
-                
+                    
+    return baskets          
     return baskets
     return baskets
 def calculate_full_asi(df: pd.DataFrame, baskets: Dict, performance_window: int = 90) -> pd.DataFrame:
