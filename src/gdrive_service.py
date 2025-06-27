@@ -92,9 +92,13 @@ def download_all_parquets_in_folder(service, folder_id: str) -> Dict[str, pd.Dat
             if df is not None and not df.empty:
                 df.dropna(subset=['date', 'close', 'volume'], inplace=True)
                 df.drop_duplicates(subset=['date'], keep='last', inplace=True)
+                # ...
                 df['date'] = pd.to_datetime(df['date'])
                 df.set_index('date', inplace=True)
+                # PATCH: Assicura che l'indice sia unico dopo averlo impostato.
+                df = df[~df.index.duplicated(keep='last')]
                 df.sort_index(inplace=True)
+# ...
                 ticker = file.get('name').replace('.parquet', '')
                 data_dict[ticker] = df
         
