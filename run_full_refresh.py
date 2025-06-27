@@ -21,19 +21,32 @@ def get_all_tickers(api_key: str, exchange_code: str) -> List[str]:
         r = requests.get(url, timeout=60)
         r.raise_for_status()
         data = r.json()
-        tickers = [
+        
+        # --- INIZIO DELLA CORREZIONE ---
+        # Usiamo un 'set' per gestire automaticamente i duplicati
+        tickers_set = {
             item['Code'] + '.' + exchange_code 
             for item in data 
             if item.get('Code', '').endswith('-USD')
-        ]
-        if not tickers:
-             raise ValueError("La lista ticker restituita da EODHD è vuota dopo il filtro.")
-        print(f"Trovati {len(tickers)} tickers che terminano in -USD.")
-        return tickers
+        }
+        
+        # Definiamo il ticker essenziale per Bitcoin e lo aggiungiamo al set.
+        # Se è già presente, non succede nulla. Se manca, viene aggiunto.
+        btc_ticker_name = "BTC-USD.CC"
+        tickers_set.add(btc_ticker_name)
+        
+        # Convertiamo il set in una lista ordinata per l'elaborazione
+        final_tickers = sorted(list(tickers_set))
+        # --- FINE DELLA CORREZIONE ---
+
+        if not final_tickers:
+             raise ValueError("La lista ticker è vuota anche dopo l'aggiunta forzata di BTC.")
+        print(f"Trovati {len(final_tickers)} tickers unici (incluso BTC garantito).")
+        return final_tickers
+
     except Exception as e:
         print(f"ERRORE CRITICO: Impossibile recuperare la lista dei ticker. {e}")
         raise
-
 def fetch_full_history_for_ticker(ticker: str, api_key: str) -> Optional[pd.DataFrame]:
     url = f"https://eodhd.com/api/eod/{ticker}?api_token={api_key}&fmt=json&period=d"
     try:
