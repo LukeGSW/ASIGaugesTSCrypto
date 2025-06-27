@@ -86,42 +86,57 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
         
     return baskets
 
+# src/data_processing.py
+
 def calculate_full_asi(df: pd.DataFrame, baskets: Dict, performance_window: int = 90) -> pd.DataFrame:
-    # ... (logica invariata)
+    print("--- Inizio calcolo ASI con debug avanzato ---")
     df_with_dates = df.set_index('date')
-
-    # --- INIZIO DELLA CORREZIONE ---
-    # Cerca il nome esatto e atteso del ticker di Bitcoin.
-    # Questo è molto più robusto di una ricerca generica con 'in'.
-    expected_btc_ticker = "BTC-USD.CC"
-    btc_ticker = next((t for t in df['ticker'].unique() if t == expected_btc_ticker), None)
-    # --- FINE DELLA CORREZIONE ---
-
-    if not btc_ticker: raise ValueError("Ticker di Bitcoin non trovato.")
-        
+    btc_ticker = next((t for t in df['ticker'].unique() if 'BTC' in t), None)
+    if not btc_ticker: 
+        print("!!! ERRORE FATALE: Ticker di Bitcoin non trovato nel DataFrame. Impossibile continuare. !!!")
+        raise ValueError("Ticker di Bitcoin non trovato.")
+    
+    print(f"Ticker di Bitcoin identificato: {btc_ticker}")
+    
     btc_perf = df_with_dates[df_with_dates['ticker'] == btc_ticker]['close'].pct_change(periods=performance_window)
     alt_perf = df_with_dates[df_with_dates['ticker'] != btc_ticker].groupby('ticker')['close'].pct_change(periods=performance_window)
-
     
     all_dates = df_with_dates.index.unique().sort_values()
     rebalancing_dates = sorted(baskets.keys())
     
+    if not rebalancing_dates:
+        print("!!! ATTENZIONE: Nessuna data di rebalancing trovata. La lista 'baskets' è vuota? !!!")
+
     asi_results = []
     
-    # Inizia a calcolare solo dopo che ci sia abbastanza storia per la finestra di performance
     start_eval_date = all_dates.min() + timedelta(days=performance_window)
     
-    for eval_date in all_dates[all_dates >= start_eval_date]:
+    print(f"Inizio valutazione dalle data: {start_eval_date.date()}")
+    evaluation_dates = all_dates[all_dates >= start_eval_date]
+    print(f"Numero di giorni da valutare: {len(evaluation_dates)}")
+
+    # Contatore per stampare log solo una volta
+    debug_print_count = 0
+
+    for eval_date in evaluation_dates:
         active_basket_date = next((rd for rd in reversed(rebalancing_dates) if rd <= eval_date), None)
-        if not active_basket_date: continue
+        if not active_basket_date: 
+            if debug_print_count == 0:
+                print(f"DEBUG ({eval_date.date()}): Nessun paniere attivo trovato per questa data.")
+            continue
             
         active_basket = baskets[active_basket_date]
         current_btc_perf = btc_perf.get(eval_date, np.nan)
-        if pd.isna(current_btc_perf): continue
+        if pd.isna(current_btc_perf): 
+            if debug_print_count == 0:
+                print(f"DEBUG ({eval_date.date()}): Performance di BTC non disponibile (NaN). Salto.")
+            continue
             
         try:
             current_alt_perf_series = alt_perf.loc[eval_date]
         except KeyError:
+            if debug_print_count == 0:
+                print(f"DEBUG ({eval_date.date()}): Nessuna performance altcoin disponibile per questa data. Salto.")
             continue
 
         outperforming_count = 0
@@ -133,6 +148,9 @@ def calculate_full_asi(df: pd.DataFrame, baskets: Dict, performance_window: int 
                 if perf > current_btc_perf:
                     outperforming_count += 1
         
+        if valid_alts_in_basket == 0 and debug_print_count == 0:
+            print(f"DEBUG ({eval_date.date()}): Paniere attivo con {len(active_basket)} altcoin, ma nessuna con dati di performance validi in questa data.")
+
         if valid_alts_in_basket > 0:
             index_value = (outperforming_count / valid_alts_in_basket) * 100
             asi_results.append({
@@ -141,6 +159,13 @@ def calculate_full_asi(df: pd.DataFrame, baskets: Dict, performance_window: int 
                 'outperforming_count': outperforming_count,
                 'basket_size': valid_alts_in_basket
             })
+        
+        if debug_print_count == 0:
+            debug_print_count += 1 # Stampa i log di debug solo per la prima data per non intasare l'output
 
-    if not asi_results: return pd.DataFrame()
+    if not asi_results: 
+        print("!!! CONCLUSIONE DEBUG: La lista 'asi_results' è rimasta vuota. Nessun dato è stato calcolato. !!!")
+        return pd.DataFrame()
+        
+    print(f"--- Calcolo ASI completato. {len(asi_results)} righe di dati generate. ---")
     return pd.DataFrame(asi_results).set_index('date')
