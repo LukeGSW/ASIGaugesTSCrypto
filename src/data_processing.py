@@ -89,11 +89,19 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
 def calculate_full_asi(df: pd.DataFrame, baskets: Dict, performance_window: int = 90) -> pd.DataFrame:
     # ... (logica invariata)
     df_with_dates = df.set_index('date')
-    btc_ticker = next((t for t in df['ticker'].unique() if 'BTC' in t), None)
+
+    # --- INIZIO DELLA CORREZIONE ---
+    # Cerca il nome esatto e atteso del ticker di Bitcoin.
+    # Questo è molto più robusto di una ricerca generica con 'in'.
+    expected_btc_ticker = "BTC-USD.CC"
+    btc_ticker = next((t for t in df['ticker'].unique() if t == expected_btc_ticker), None)
+    # --- FINE DELLA CORREZIONE ---
+
     if not btc_ticker: raise ValueError("Ticker di Bitcoin non trovato.")
         
     btc_perf = df_with_dates[df_with_dates['ticker'] == btc_ticker]['close'].pct_change(periods=performance_window)
     alt_perf = df_with_dates[df_with_dates['ticker'] != btc_ticker].groupby('ticker')['close'].pct_change(periods=performance_window)
+
     
     all_dates = df_with_dates.index.unique().sort_values()
     rebalancing_dates = sorted(baskets.keys())
