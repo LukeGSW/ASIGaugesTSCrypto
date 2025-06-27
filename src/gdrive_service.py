@@ -15,11 +15,8 @@ from googleapiclient.errors import HttpError
 # --- FUNZIONE DI AUTENTICAZIONE CON PATCH DEFINITIVA ---
 # Assicurati che la funzione get_gdrive_service sia questa:
 
+# Funzione get_gdrive_service in src/gdrive_service.py
 def get_gdrive_service(sa_key_string: str):
-    """
-    Crea un servizio autenticato per Google Drive usando la stringa JSON della chiave.
-    Questo è il metodo standard e corretto.
-    """
     try:
         creds_info = json.loads(sa_key_string)
         creds = service_account.Credentials.from_service_account_info(creds_info)
@@ -29,7 +26,6 @@ def get_gdrive_service(sa_key_string: str):
     except Exception as e:
         print(f"Errore fatale durante l'autenticazione a Google Drive: {e}")
         raise
-
 # ... (il resto del file gdrive_service.py rimane invariato) ...
 # --- FINE DELLA FUNZIONE CON PATCH ---
 
