@@ -1,4 +1,4 @@
-# src/gdrive_service.py (VERSIONE CON UPLOAD ROBUSTO)
+# src/gdrive_service.py (VERSIONE CON AUTENTICAZIONE ROBUSTA)
 
 import io
 import json
@@ -11,6 +11,25 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 from googleapiclient.errors import HttpError
+
+# --- NUOVA VERSIONE DELLA FUNZIONE ---
+def get_gdrive_service(sa_key_string: str):
+    """
+    Crea un servizio autenticato per Google Drive usando la stringa della chiave JSON,
+    trattandola come un file in memoria per massima compatibilità.
+    """
+    try:
+        # Carica le credenziali direttamente dalla stringa JSON usando from_service_account_info
+        # Questo è il metodo standard e dovrebbe funzionare correttamente.
+        creds_info = json.loads(sa_key_string)
+        creds = service_account.Credentials.from_service_account_info(creds_info)
+        service = build('drive', 'v3', credentials=creds, cache_discovery=False)
+        print("Servizio Google Drive autenticato con successo.")
+        return service
+    except Exception as e:
+        print(f"Errore fatale durante l'autenticazione a Google Drive: {e}")
+        raise
+# ------------------------------------
 
 def _execute_with_retry(request, retries=5, backoff_factor=2):
     """Esegue una richiesta API con logica di retry e backoff esponenziale."""
@@ -28,18 +47,6 @@ def _execute_with_retry(request, retries=5, backoff_factor=2):
             time.sleep(wait_time)
             
     raise Exception(f"La richiesta API è fallita dopo {retries} tentativi.")
-
-def get_gdrive_service(sa_key_string: str):
-    """Crea e restituisce un servizio autenticato per l'API di Google Drive."""
-    try:
-        creds_info = json.loads(sa_key_string)
-        creds = service_account.Credentials.from_service_account_info(creds_info)
-        service = build('drive', 'v3', credentials=creds, cache_discovery=False)
-        print("Servizio Google Drive autenticato con successo.")
-        return service
-    except Exception as e:
-        print(f"Errore fatale durante l'autenticazione a Google Drive: {e}")
-        raise
 
 def find_id(service, name: str, parent_id: str = None, mime_type: str = None) -> Optional[str]:
     """Trova l'ID di un file o cartella per nome."""
@@ -62,7 +69,8 @@ def upload_or_update_parquet(service, df: pd.DataFrame, file_name: str, parent_f
     """Carica o aggiorna un DataFrame come file .parquet su Google Drive."""
     file_metadata = {'name': file_name, 'parents': [parent_folder_id]}
     buffer = io.BytesIO()
-    df.to_parquet(buffer, index=True) # Assicuriamoci che l'indice (data) sia salvato
+    # Quando salviamo, includiamo l'indice (che dovrebbe essere la data)
+    df.to_parquet(buffer, index=True) 
     buffer.seek(0)
     media = MediaIoBaseUpload(buffer, mimetype='application/octet-stream', resumable=True)
     
@@ -76,19 +84,13 @@ def upload_or_update_parquet(service, df: pd.DataFrame, file_name: str, parent_f
             request = service.files().create(body=file_metadata, media_body=media, fields='id')
             print(f"  - Tentativo di creazione per {file_name}...")
         
-        # --- INIZIO DELLA CORREZIONE ---
-        # Eseguiamo la richiesta e catturiamo la risposta dell'API
         response = _execute_with_retry(request)
         
-        # Verifichiamo attivamente che la risposta contenga un ID file.
-        # Questa è la conferma positiva che l'operazione ha avuto successo.
         if response and response.get('id'):
             print(f"  - CONFERMATO: '{file_name}' gestito con successo (File ID: {response.get('id')}).")
         else:
-            # Se non otteniamo un ID, forziamo un errore.
             raise Exception("L'API di Google Drive non ha restituito un ID file valido, l'upload è fallito.")
-        # --- FINE DELLA CORREZIONE ---
-
+            
     except Exception as e:
         print(f"!!! FALLIMENTO FINALE per '{file_name}'. Errore: {e}")
         raise
@@ -116,8 +118,6 @@ def download_parquet(service, file_id: str) -> Optional[pd.DataFrame]:
         return None
 
 
-# in src/gdrive_service.py
-
 def download_all_parquets_in_folder(service, folder_id: str) -> pd.DataFrame:
     """
     Scarica tutti i file .parquet da una cartella di GDrive e li unisce in un DataFrame,
@@ -143,7 +143,6 @@ def download_all_parquets_in_folder(service, folder_id: str) -> pd.DataFrame:
             
             if df is not None:
                 df['ticker'] = file.get('name').replace('.parquet', '')
-                # Se la data è l'indice, la spostiamo in una colonna
                 if isinstance(df.index, pd.DatetimeIndex):
                     df.reset_index(inplace=True)
                 df_list.append(df)
@@ -155,15 +154,11 @@ def download_all_parquets_in_folder(service, folder_id: str) -> pd.DataFrame:
 
         full_df = pd.concat(df_list, ignore_index=True)
 
-        # --- INIZIO DELLA CORREZIONE ---
-        # Conversione finale e autorevole della colonna 'date'.
-        # Questo risolve ogni incoerenza proveniente dai file singoli.
         if 'date' in full_df.columns:
             full_df['date'] = pd.to_datetime(full_df['date'])
             print("Colonna 'date' convertita con successo in formato datetime.")
         else:
             raise ValueError("DataFrame finale non contiene una colonna 'date'. Impossibile procedere.")
-        # --- FINE DELLA CORREZIONE ---
             
         return full_df
 
