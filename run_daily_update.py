@@ -13,7 +13,9 @@ GDRIVE_SA_KEY = os.getenv("GDRIVE_SA_KEY")
 ROOT_FOLDER_NAME = "KriterionQuant_Data"
 PRODUCTION_FOLDER_NAME = "production"
 PRODUCTION_FILE_NAME = "altcoin_season_index.parquet"
-HIST_FILES_FOLDER_PATH = ["MyDrive", "ASIGauge", "HistFiles"]
+HIST_FILES_FOLDER_NAME = "HistFiles"
+# Opzionale: specifica l'ID della cartella HistFiles se lo conosci
+HIST_FILES_FOLDER_ID = 1_WEblq4NIxkduVaPraiFUd9AniVKV0vJ  # Sostituisci con l'ID reale se disponibile, es. "ABC123xyz"
 
 # --- FUNZIONE PER SCARICARE CSV ---
 def download_all_csv_in_folder(service: Resource, folder_id: str) -> dict[str, pd.DataFrame]:
@@ -36,7 +38,7 @@ def download_all_csv_in_folder(service: Resource, folder_id: str) -> dict[str, p
         files = response.get('files', [])
         
         if not files:
-            raise FileNotFoundError("Nessun file CSV trovato nella cartella HistFiles.")
+            raise FileNotFoundError(f"Nessun file CSV trovato nella cartella '{HIST_FILES_FOLDER_NAME}'.")
         
         data_dict = {}
         total_files = len(files)
@@ -98,18 +100,34 @@ if __name__ == "__main__":
     
     try:
         print("Ricerca cartelle su Google Drive...")
-        # Trova l'ID della cartella HistFiles
-        current_parent_id = None
-        for folder_name in HIST_FILES_FOLDER_PATH:
-            current_parent_id = find_id(gdrive_service, name=folder_name, parent_id=current_parent_id, mime_type='application/vnd.google-apps.folder')
-            if not current_parent_id:
-                raise FileNotFoundError(f"Cartella '{folder_name}' non trovata nel percorso {HIST_FILES_FOLDER_PATH}.")
-        
-        hist_files_folder_id = current_parent_id
+        # Usa l'ID della cartella HistFiles se fornito, altrimenti cercala
+        if HIST_FILES_FOLDER_ID:
+            hist_files_folder_id = HIST_FILES_FOLDER_ID
+        else:
+            # Cerca la cartella HistFiles direttamente (deve essere condivisa con il service account)
+            hist_files_folder_id = find_id(
+                gdrive_service,
+                name=HIST_FILES_FOLDER_NAME,
+                mime_type='application/vnd.google-apps.folder'
+            )
+            if not hist_files_folder_id:
+                raise FileNotFoundError(f"Cartella '{HIST_FILES_FOLDER_NAME}' non trovata su Google Drive.")
+
         # Trova l'ID della cartella di produzione
         root_folder_id = find_id(gdrive_service, name=ROOT_FOLDER_NAME, mime_type='application/vnd.google-apps.folder')
-        production_folder_id = find_id(gdrive_service, name=PRODUCTION_FOLDER_NAME, parent_id=root_folder_id, mime_type='application/vnd.google-apps.folder')
-        print("Cartelle trovate con successo.")
+        if not root_folder_id:
+            raise FileNotFoundError(f"Cartella radice '{ROOT_FOLDER_NAME}' non trovata.")
+        
+        production_folder_id = find_id(
+            gdrive_service,
+            name=PRODUCTION_FOLDER_NAME,
+            parent_id=root_folder_id,
+            mime_type='application/vnd.google-apps.folder'
+        )
+        if not production_folder_id:
+            raise FileNotFoundError(f"Cartella '{PRODUCTION_FOLDER_NAME}' non trovata.")
+        
+        print(f"Cartelle trovate: HistFiles (ID: {hist_files_folder_id}), Production (ID: {production_folder_id})")
 
         # Scarica i dati storici dalla cartella HistFiles
         historical_data_dict = download_all_csv_in_folder(gdrive_service, hist_files_folder_id)
