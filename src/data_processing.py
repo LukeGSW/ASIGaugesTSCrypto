@@ -54,18 +54,11 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[Dict[str, pd
 def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int = 30, rebalancing_freq: str = '90D', performance_window: int = 90) -> Dict:
     if df.empty: return {}
         
-    # --- INIZIO SOLUZIONE ---
-    
-    # 1. Assicura che la colonna 'date' sia in formato datetime corretto.
     df['date'] = pd.to_datetime(df['date'])
-
     df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
     
-    # 2. NON impostare più la data come indice del DataFrame aggregato.
-    # df_with_dates = df.set_index('date') <-- RIMUOVI O COMMENTA QUESTA RIGA
-
-    start_date = pd.to_datetime('2017-01-01')
-    end_date = df['date'].max() # Usa la colonna 'date'
+    start_date = df['date'].min()
+    end_date = df['date'].max()
     rebalancing_dates = pd.date_range(start=start_date, end=end_date, freq=rebalancing_freq)
     
     baskets = {}
@@ -73,33 +66,22 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
 
     for reb_date in rebalancing_dates:
         lookback_start = reb_date - pd.Timedelta(days=lookback_days)
-
-        # 3. Usa il boolean indexing sulla colonna 'date' invece dello slicing su .loc.
+        
         mask = (df['date'] > lookback_start) & (df['date'] <= reb_date)
         volume_period_df = df.loc[mask]
         
-        # --- FINE SOLUZIONE ---
-
         if volume_period_df.empty: continue
             
-        total_volume = volume_period_df.groupby('ticker')['volume'].sum()
-        if btc_ticker and btc_ticker in total_volume.index:
-            altcoin_volumes = total_volume.drop(btc_ticker, errors='ignore')
+        # --- ECCO LA CORREZIONE FONDAMENTALE: DA .sum() a .mean() ---
+        avg_volume = volume_period_df.groupby('ticker')['volume'].mean()
+        
+        if btc_ticker and btc_ticker in avg_volume.index:
+            altcoin_volumes = avg_volume.drop(btc_ticker, errors='ignore')
         else:
-            altcoin_volumes = total_volume
+            altcoin_volumes = avg_volume
             
         top_by_volume = altcoin_volumes.nlargest(top_n)
         
-        if btc_ticker and btc_ticker in total_volume.index:
-            altcoin_volumes = total_volume.drop(btc_ticker, errors='ignore')
-        else:
-            altcoin_volumes = total_volume
-            
-        top_by_volume = altcoin_volumes.nlargest(top_n)
-        
-        # --- SOLUZIONE ---
-        # Seleziona direttamente i ticker dalla lista top_by_volume senza ulteriori filtri,
-        # proprio come faceva il notebook originale.
         final_basket_coins = top_by_volume.index.tolist()
         
         if final_basket_coins:
