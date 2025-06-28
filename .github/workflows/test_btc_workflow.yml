@@ -1,0 +1,28 @@
+# .github/workflows/test_btc_workflow.yml
+
+name: Test Download BTC
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-btc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del codice
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Installazione dipendenze
+        run: |
+          pip install -r requirements.txt
+
+      - name: Esecuzione script di test per BTC
+        env:
+          GDRIVE_SA_KEY: ${{ secrets.GDRIVE_SA_KEY }}
+          EODHD_API_KEY: ${{ secrets.EODHD_API_KEY }}
+        run: python test_btc_download.py
