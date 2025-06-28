@@ -90,12 +90,17 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
             
         top_by_volume = altcoin_volumes.nlargest(top_n)
         
-        final_basket_coins = []
-        for ticker in top_by_volume.index:
-            # Filtra per ticker E per data
-            ticker_history_before_reb = df[df['ticker'] == ticker].loc[df['date'] <= reb_date]
-            if len(ticker_history_before_reb) >= performance_window:
-                final_basket_coins.append(ticker)
+        if btc_ticker and btc_ticker in total_volume.index:
+            altcoin_volumes = total_volume.drop(btc_ticker, errors='ignore')
+        else:
+            altcoin_volumes = total_volume
+            
+        top_by_volume = altcoin_volumes.nlargest(top_n)
+        
+        # --- SOLUZIONE ---
+        # Seleziona direttamente i ticker dalla lista top_by_volume senza ulteriori filtri,
+        # proprio come faceva il notebook originale.
+        final_basket_coins = top_by_volume.index.tolist()
         
         if final_basket_coins:
             baskets[reb_date] = final_basket_coins
