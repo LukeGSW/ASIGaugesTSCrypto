@@ -64,7 +64,8 @@ def download_all_csv_in_folder(service: Resource, folder_id: str) -> dict[str, p
                     print(f"  - Errore: '{file_name}' non ha la colonna 'date'. Salto.")
                     continue
                 
-                df['date'] = pd.to_datetime(df['date'])
+                # Converti le date in tz-naive
+                df['date'] = pd.to_datetime(df['date'], utc=False)
                 df.set_index('date', inplace=True)
                 df = df[['open', 'high', 'low', 'close', 'adjusted_close', 'volume']].dropna(subset=['close', 'volume'])
                 df = df[~df.index.duplicated(keep='last')].sort_index()
@@ -133,26 +134,35 @@ if __name__ == "__main__":
         if daily_delta_dict:
             print("Dati incrementali trovati. Eseguo unione nel dizionario...")
             for ticker, delta_df in daily_delta_dict.items():
-                if ticker in historical_data_dict:
-                    hist_df = historical_data_dict[ticker]
-                    
-                    # Resetta l'indice di entrambi i DataFrame
-                    hist_df_reset = hist_df.reset_index()
-                    delta_df_reset = delta_df.reset_index()
-                    
-                    # Concatena e rimuovi duplicati
-                    combined_df = pd.concat([hist_df_reset, delta_df_reset], ignore_index=True)
-                    combined_df.drop_duplicates(subset=['date'], keep='last', inplace=True)
-                    
-                    # Reimposta l'indice e ordina
-                    combined_df['date'] = pd.to_datetime(combined_df['date'])
-                    combined_df.set_index('date', inplace=True)
-                    combined_df.sort_index(inplace=True)
-                    
-                    historical_data_dict[ticker] = combined_df
-                else:
-                    delta_df.index = pd.to_datetime(delta_df.index)
-                    historical_data_dict[ticker] = delta_df
+                print(f"Unione dati per ticker: {ticker}")
+                try:
+                    if ticker in historical_data_dict:
+                        hist_df = historical_data_dict[ticker]
+                        
+                        # Resetta l'indice di entrambi i DataFrame
+                        hist_df_reset = hist_df.reset_index()
+                        delta_df_reset = delta_df.reset_index()
+                        
+                        # Rimuovi il fuso orario dai dati giornalieri
+                        if delta_df_reset['date'].dtype.tz is not None:
+                            delta_df_reset['date'] = delta_df_reset['date'].dt.tz_localize(None)
+                        
+                        # Concatena e rimuovi duplicati
+                        combined_df = pd.concat([hist_df_reset, delta_df_reset], ignore_index=True)
+                        combined_df.drop_duplicates(subset=['date'], keep='last', inplace=True)
+                        
+                        # Reimposta l'indice e ordina
+                        combined_df['date'] = pd.to_datetime(combined_df['date'], utc=False)
+                        combined_df.set_index('date', inplace=True)
+                        combined_df.sort_index(inplace=True)
+                        
+                        historical_data_dict[ticker] = combined_df
+                    else:
+                        delta_df.index = pd.to_datetime(delta_df.index, utc=False)
+                        historical_data_dict[ticker] = delta_df
+                except Exception as e:
+                    print(f"  - Errore durante l'unione per '{ticker}': {e}")
+                    continue
             print("Unione nel dizionario completata.")
         else:
             print("Nessun nuovo dato dall'API.")
