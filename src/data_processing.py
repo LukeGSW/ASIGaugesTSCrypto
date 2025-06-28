@@ -45,7 +45,7 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[Dict[str, pd
                 final_df.dropna(inplace=True)
 
                 if not final_df.empty:
-                    final_df['date'] = pd.to_datetime(final_df['date'], utc=False)
+                    final_df['date'] = pd.to_datetime(final_df['date'], utc=True).dt.tz_localize(None)
                     final_df.set_index('date', inplace=True)
                     delta_dict[ticker] = final_df[['close', 'volume']]
                 else:
@@ -64,7 +64,7 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
         return {}
         
     # Converti le date in tz-naive
-    df['date'] = pd.to_datetime(df['date'], utc=False)
+    df['date'] = pd.to_datetime(df['date'], utc=True).dt.tz_localize(None)
     df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
     
     start_date = pd.to_datetime('2018-01-01', utc=False)
@@ -79,6 +79,7 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
     btc_ticker = next((t for t in df['ticker'].unique() if 'BTC-USD.CC' in t), None)
 
     for reb_date in rebalancing_dates:
+        reb_date = reb_date.tz_localize(None)  # Assicura che reb_date sia tz-naive
         lookback_start = reb_date - pd.Timedelta(days=lookback_days)
         
         mask = (df['date'] > lookback_start) & (df['date'] <= reb_date)
@@ -115,7 +116,7 @@ def calculate_full_asi(data_dict: Dict[str, pd.DataFrame], baskets: Dict, perfor
     if not btc_ticker or btc_ticker not in data_dict:
         raise ValueError("Dati di Bitcoin non trovati.")
     
-    all_dates = pd.to_datetime(sorted(list(set(date for df in data_dict.values() for date in df.index))), utc=False)
+    all_dates = pd.to_datetime(sorted(list(set(date for df in data_dict.values() for date in df.index))), utc=True).tz_localize(None)
     rebalancing_dates = sorted(baskets.keys())
     
     perf_dict = {ticker: df['close'].pct_change(periods=performance_window) for ticker, df in data_dict.items()}
