@@ -65,7 +65,7 @@ def download_all_csv_in_folder(service: Resource, folder_id: str) -> dict[str, p
                     continue
                 
                 # Converti le date in tz-naive
-                df['date'] = pd.to_datetime(df['date'], utc=False)
+                df['date'] = pd.to_datetime(df['date'], utc=True).dt.tz_localize(None)
                 df.set_index('date', inplace=True)
                 df = df[['open', 'high', 'low', 'close', 'adjusted_close', 'volume']].dropna(subset=['close', 'volume'])
                 df = df[~df.index.duplicated(keep='last')].sort_index()
@@ -148,8 +148,8 @@ if __name__ == "__main__":
                         print(f"  - Tipo di dati 'date' per {ticker} (delta): {delta_df_reset['date'].dtype}")
                         
                         # Converti entrambe le colonne date in tz-naive
-                        hist_df_reset['date'] = pd.to_datetime(hist_df_reset['date'], utc=False)
-                        delta_df_reset['date'] = pd.to_datetime(delta_df_reset['date'], utc=False)
+                        hist_df_reset['date'] = pd.to_datetime(hist_df_reset['date'], utc=True).dt.tz_localize(None)
+                        delta_df_reset['date'] = pd.to_datetime(delta_df_reset['date'], utc=True).dt.tz_localize(None)
                         
                         # Concatena e rimuovi duplicati
                         combined_df = pd.concat([hist_df_reset, delta_df_reset], ignore_index=True)
@@ -162,7 +162,7 @@ if __name__ == "__main__":
                         
                         historical_data_dict[ticker] = combined_df
                     else:
-                        delta_df.index = pd.to_datetime(delta_df.index, utc=False)
+                        delta_df.index = pd.to_datetime(delta_df.index, utc=True).tz_localize(None)
                         historical_data_dict[ticker] = delta_df
                 except Exception as e:
                     print(f"  - Errore durante l'unione per '{ticker}': {e}")
@@ -179,6 +179,7 @@ if __name__ == "__main__":
             df_list_for_concat.append(df_copy)
         
         full_df_for_baskets = pd.concat(df_list_for_concat).reset_index()
+        full_df_for_baskets['date'] = pd.to_datetime(full_df_for_baskets['date'], utc=True).dt.tz_localize(None)
         print(f"Tipo di dati 'date' in full_df_for_baskets: {full_df_for_baskets['date'].dtype}")
 
         print("Inizio generazione panieri dinamici...")
