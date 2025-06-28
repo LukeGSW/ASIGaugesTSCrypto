@@ -143,9 +143,13 @@ if __name__ == "__main__":
                         hist_df_reset = hist_df.reset_index()
                         delta_df_reset = delta_df.reset_index()
                         
-                        # Rimuovi il fuso orario dai dati giornalieri
-                        if delta_df_reset['date'].dtype.tz is not None:
-                            delta_df_reset['date'] = delta_df_reset['date'].dt.tz_localize(None)
+                        # Debug: stampa i tipi di dati delle date
+                        print(f"  - Tipo di dati 'date' per {ticker} (storico): {hist_df_reset['date'].dtype}")
+                        print(f"  - Tipo di dati 'date' per {ticker} (delta): {delta_df_reset['date'].dtype}")
+                        
+                        # Converti entrambe le colonne date in tz-naive
+                        hist_df_reset['date'] = pd.to_datetime(hist_df_reset['date'], utc=False)
+                        delta_df_reset['date'] = pd.to_datetime(delta_df_reset['date'], utc=False)
                         
                         # Concatena e rimuovi duplicati
                         combined_df = pd.concat([hist_df_reset, delta_df_reset], ignore_index=True)
@@ -175,6 +179,7 @@ if __name__ == "__main__":
             df_list_for_concat.append(df_copy)
         
         full_df_for_baskets = pd.concat(df_list_for_concat).reset_index()
+        print(f"Tipo di dati 'date' in full_df_for_baskets: {full_df_for_baskets['date'].dtype}")
 
         print("Inizio generazione panieri dinamici...")
         dynamic_baskets = dp.create_dynamic_baskets(full_df_for_baskets)
