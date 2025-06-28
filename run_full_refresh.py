@@ -1,4 +1,4 @@
-# run_full_refresh.py (VERSIONE DEFINITIVA v2)
+# run_full_refresh.py (VERSIONE FINALE E CORRETTA)
 
 import os
 import pandas as pd
@@ -29,8 +29,7 @@ def get_all_tickers(api_key: str, exchange_code: str) -> List[str]:
         
         for item in data:
             code = item.get("Code")
-            if not code or not isinstance(code, str):
-                continue
+            if not code or not isinstance(code, str): continue
             
             if code.endswith('-USD'):
                 all_tickers.add(f"{code}.{exchange_code}")
@@ -43,7 +42,7 @@ def get_all_tickers(api_key: str, exchange_code: str) -> List[str]:
 
         if not final_tickers:
              raise ValueError("La lista ticker è vuota.")
-        print(f"Trovati {len(final_tickers)} tickers unici (incluso BTC).")
+        print(f"Trovati {len(final_tickers)} tickers unici (incluso BTC garantito).")
         return final_tickers
 
     except Exception as e:
@@ -56,7 +55,7 @@ def fetch_full_history_for_ticker(ticker: str, api_key: str, start_date: str) ->
     """
     url = f"https://eodhd.com/api/eod/{ticker}?api_token={api_key}&fmt=json&period=d&from={start_date}"
     try:
-        r = requests.get(url, timeout=30)
+        r = requests.get(url, timeout=60)
         r.raise_for_status()
         data = r.json()
         if not data:
@@ -64,27 +63,34 @@ def fetch_full_history_for_ticker(ticker: str, api_key: str, start_date: str) ->
         
         df = pd.DataFrame(data)
 
-        # --- SOLUZIONE DEFINITIVA ---
-        final_df_data = {'date': df['date']}
-        
-        # 1. Scegli la colonna 'close' corretta. Priorità ad 'adjusted_close'.
-        if 'adjusted_close' in df.columns and df['adjusted_close'].notna().any():
-            final_df_data['close'] = df['adjusted_close']
-        elif 'close' in df.columns:
-            final_df_data['close'] = df['close']
+        # --- SOLUZIONE DEFINITIVA PER LA GESTIONE DELLE COLONNE ---
+        final_data = {}
+
+        if 'date' in df.columns:
+            final_data['date'] = df['date']
         else:
+            return None # La data è fondamentale
+
+        # Priorità ad 'adjusted_close'. Se esiste, lo usiamo come 'close'.
+        if 'adjusted_close' in df.columns and df['adjusted_close'].notna().any():
+            final_data['close'] = df['adjusted_close']
+        # Altrimenti, usiamo 'close' se esiste.
+        elif 'close' in df.columns:
+            final_data['close'] = df['close']
+        else:
+            # Se non ci sono colonne per il prezzo, il dato è inutile.
             print(f"  - Dati per {ticker} non contengono una colonna 'close' valida. Salto.")
             return None
 
-        # 2. Aggiungi il volume se esiste.
+        # Aggiungi il volume se esiste
         if 'volume' in df.columns:
-            final_df_data['volume'] = df['volume']
+            final_data['volume'] = df['volume']
         else:
             print(f"  - Dati per {ticker} non contengono la colonna 'volume'. Salto.")
             return None
         
-        # 3. Crea il DataFrame finale solo con le colonne necessarie e uniche.
-        return pd.DataFrame(final_df_data)
+        # Crea il DataFrame finale solo con le colonne necessarie e uniche.
+        return pd.DataFrame(final_data)
         # --- FINE SOLUZIONE ---
 
     except requests.exceptions.RequestException as e:
