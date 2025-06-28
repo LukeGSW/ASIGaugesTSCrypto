@@ -1,9 +1,12 @@
-# app.py (VERSIONE FINALE CON PATCH DI SICUREZZA)
-
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import traceback # <-- Assicurati che questo import sia presente
+import traceback
+import logging
+
+# Configura logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Importiamo le nostre funzioni dai moduli
 from src.data_loader import load_production_asi
@@ -41,31 +44,24 @@ data_container = st.empty()
 with data_container.container():
     st.info("Caricamento dati di produzione in corso da Google Drive...")
     asi_df = load_production_asi()
+    logger.info(f"Dati ASI caricati: {asi_df.shape} righe e colonne")
 
     # --- INIZIO DELLA PATCH DI SICUREZZA ---
-    # Controlliamo lo stato del DataFrame caricato prima di usarlo.
     if asi_df is None or asi_df.empty:
         st.error("Caricamento dati fallito o dati non disponibili. Controllare lo stato della pipeline dati.")
         st.stop()
     
-    # Forziamo la conversione dell'indice in DatetimeIndex
-    # Questo blocco risolve l'AttributeError
     try:
-        # Questo codice gestisce i casi in cui la data sia l'indice o una colonna.
         if not isinstance(asi_df.index, pd.DatetimeIndex):
             if 'date' in asi_df.columns:
                 asi_df['date'] = pd.to_datetime(asi_df['date'])
                 asi_df = asi_df.set_index('date')
-            # Se la colonna 'date' non esiste, proviamo a usare l'indice
             else: 
                 asi_df.index = pd.to_datetime(asi_df.index)
         
         asi_df.sort_index(inplace=True)
-
-        # Ora possiamo usare l'indice con la certezza che sia una data
         last_update_str = asi_df.index.max().strftime('%Y-%m-%d')
         st.success(f"Dati caricati con successo. Ultimo aggiornamento: {last_update_str}")
-
     except Exception as e:
         st.error(f"Errore nella formattazione dei dati caricati: {e}")
         st.code(traceback.format_exc())
@@ -74,9 +70,14 @@ with data_container.container():
 
 # 2. Esegui i calcoli
 indicators_df = calculate_asi_indicators(asi_df)
+logger.info(f"Indicatori calcolati: {list(indicators_df.columns)}")
 latest_data = indicators_df.iloc[-1]
 level_ts1, amount_ts1, rule_id_ts1 = get_boost_ts1(latest_data)
 level_ts2, amount_ts2, rule_id_ts2 = get_boost_ts2(latest_data)
+
+# --- LOGGING OPZIONALE DEI VALORI DEI TRADING SYSTEM ---
+logger.info(f"Valori per TS1: level={level_ts1}, amount={amount_ts1}, rule={rule_id_ts1}")
+logger.info(f"Valori per TS2: level={level_ts2}, amount={amount_ts2}, rule={rule_id_ts2}")
 
 # --- VISUALIZZAZIONE GAUGE ---
 st.subheader("Allocazione Attuale per Trading System")
@@ -90,7 +91,6 @@ with col2:
     gauge2 = create_gauge_chart(level_ts2, amount_ts2, "Trading System 2")
     st.plotly_chart(gauge2, use_container_width=True)
     st.info(f"Regola Attiva: **{rule_id_ts2}**")
-
 
 # --- GRAFICI STORICI ---
 st.markdown("---")
