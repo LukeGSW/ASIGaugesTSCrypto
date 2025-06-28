@@ -1,3 +1,5 @@
+# data_processing.py (VERSIONE FINALE E CORRETTA)
+
 import pandas as pd
 import requests
 import numpy as np
@@ -9,43 +11,40 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[Dict[str, pd
     print(f"Scaricamento aggiornamenti per {len(tickers)} tickers...")
     delta_dict = {}
     end_date = datetime.utcnow().date()
-    start_date = end_date - timedelta(days=5) # Lookback di 5 giorni per sicurezza
+    start_date = end_date - timedelta(days=5)
     
     for ticker in tickers:
         url = f"https://eodhd.com/api/eod/{ticker}?api_token={api_key}&from={start_date}&to={end_date}&fmt=json&period=d"
         try:
             r = requests.get(url, timeout=30)
-            if r.status_code == 200:
-                data = r.json()
-                if data:
-                    df = pd.DataFrame(data)
-                    
-                    # --- INIZIO DELLA SOLUZIONE ---
-                    # 1. Prioritizza 'adjusted_close' e rinominalo in 'close'.
-                    #    Se non esiste, il 'close' originale verrà usato.
-                    if 'adjusted_close' in df.columns:
-                        df['close'] = df['adjusted_close']
-                    
-                    # 2. Seleziona esplicitamente un set di colonne univoche.
-                    #    Questo elimina automaticamente qualsiasi colonna duplicata ('close' originale) o non necessaria.
-                    required_cols = ['date', 'close', 'volume']
-                    
-                    # Controlla se le colonne necessarie esistono prima di procedere
-                    if not all(col in df.columns for col in required_cols):
-                        print(f"  - Dati incompleti per {ticker}. Salto.")
-                        continue
-                        
-                    final_df = df[required_cols].copy() # Usa .copy() per evitare warning
-                    # --- FINE DELLA SOLUZIONE ---
+            r.raise_for_status()
+            data = r.json()
+            if data:
+                df = pd.DataFrame(data)
+                
+                final_data = {}
+                if 'date' not in df.columns: continue
+                final_data['date'] = df['date']
+                
+                if 'adjusted_close' in df.columns and df['adjusted_close'].notna().any():
+                    final_data['close'] = df['adjusted_close']
+                elif 'close' in df.columns:
+                    final_data['close'] = df['close']
+                else: continue
 
-                    final_df.dropna(subset=['date', 'close', 'volume'], inplace=True)
-                    if not final_df.empty:
-                        final_df['date'] = pd.to_datetime(final_df['date'])
-                        final_df.set_index('date', inplace=True)
-                        delta_dict[ticker] = final_df[['close', 'volume']] # La selezione finale avviene qui
+                if 'volume' in df.columns:
+                    final_data['volume'] = df['volume']
+                else: continue
+                
+                final_df = pd.DataFrame(final_data)
+                final_df.dropna(inplace=True)
 
-        except requests.exceptions.RequestException as e:
-            print(f"  - Errore API per {ticker}: {e}. Salto.")
+                if not final_df.empty:
+                    final_df['date'] = pd.to_datetime(final_df['date'])
+                    final_df.set_index('date', inplace=True)
+                    delta_dict[ticker] = final_df[['close', 'volume']]
+
+        except requests.exceptions.RequestException:
             continue
         time.sleep(0.1)
 
@@ -57,11 +56,8 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
     df['date'] = pd.to_datetime(df['date'])
     df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
     
-    # --- SOLUZIONE: FORZA LA DATA DI INIZIO CORRETTA ---
     start_date = pd.to_datetime('2018-01-01')
     end_date = df['date'].max()
-    # --- FINE SOLUZIONE ---
-    
     rebalancing_dates = pd.date_range(start=start_date, end=end_date, freq=rebalancing_freq)
     
     baskets = {}
@@ -103,7 +99,9 @@ def calculate_full_asi(data_dict: Dict[str, pd.DataFrame], baskets: Dict, perfor
     perf_dict = {ticker: df['close'].pct_change(periods=performance_window) for ticker, df in data_dict.items()}
     
     asi_results = []
-    start_eval_date = all_dates.min() + timedelta(days=performance_window)
+    
+    first_rebal_date = rebalancing_dates[0]
+    start_eval_date = first_rebal_date
     
     for eval_date in all_dates[all_dates >= start_eval_date]:
         active_basket_date = next((rd for rd in reversed(rebalancing_dates) if rd <= eval_date), None)
