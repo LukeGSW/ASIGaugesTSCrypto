@@ -123,7 +123,41 @@ if __name__ == "__main__":
             raise FileNotFoundError(f"Cartella '{PRODUCTION_FOLDER_NAME}' non trovata.")
         
         print(f"Cartelle trovate: HistFiles (ID: {HIST_FILES_FOLDER_ID}), Production (ID: {production_folder_id})")
+import requests
+   import pandas as pd
 
+   # Controlla se BTC-USD.CC è presente in historical_data_dict
+   btc_ticker = 'BTC-USD.CC'
+   if btc_ticker not in historical_data_dict:
+       print(f"{btc_ticker} non trovato in historical_data_dict. Scarico i dati da EODHD...")
+       try:
+           # Costruisci l'URL per scaricare i dati storici di Bitcoin
+           url = f"https://eodhd.com/api/eod/{btc_ticker}?api_token={EODHD_API_KEY}&fmt=json&period=d"
+           response = requests.get(url, timeout=30)
+           response.raise_for_status()  # Solleva un'eccezione se la richiesta fallisce
+           data = response.json()
+           
+           if data:
+               # Converte i dati in un DataFrame pandas
+               df = pd.DataFrame(data)
+               
+               # Converti la colonna 'date' in datetime tz-naive
+               df['date'] = pd.to_datetime(df['date'], utc=True).dt.tz_localize(None)
+               
+               # Imposta 'date' come indice
+               df.set_index('date', inplace=True)
+               
+               # Mantieni solo le colonne 'close' e 'volume', come per gli altri ticker
+               df = df[['close', 'volume']].dropna()
+               
+               # Aggiungi i dati al dizionario
+               historical_data_dict[btc_ticker] = df
+               print(f"Dati di {btc_ticker} scaricati con successo.")
+           else:
+               raise ValueError(f"Nessun dato restituito per {btc_ticker}")
+       except Exception as e:
+           print(f"Errore nel download dei dati di {btc_ticker}: {e}")
+           raise  # Interrompi il workflow se il download fallisce
         # Scarica i dati storici dalla cartella HistFiles
         historical_data_dict = download_all_csv_in_folder(gdrive_service, HIST_FILES_FOLDER_ID)
         
