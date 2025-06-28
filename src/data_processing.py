@@ -57,8 +57,11 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
     df['date'] = pd.to_datetime(df['date'])
     df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
     
-    start_date = df['date'].min()
+    # --- SOLUZIONE: FORZA LA DATA DI INIZIO CORRETTA ---
+    start_date = pd.to_datetime('2018-01-01')
     end_date = df['date'].max()
+    # --- FINE SOLUZIONE ---
+    
     rebalancing_dates = pd.date_range(start=start_date, end=end_date, freq=rebalancing_freq)
     
     baskets = {}
@@ -72,7 +75,6 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
         
         if volume_period_df.empty: continue
             
-        # --- ECCO LA CORREZIONE FONDAMENTALE: DA .sum() a .mean() ---
         avg_volume = volume_period_df.groupby('ticker')['volume'].mean()
         
         if btc_ticker and btc_ticker in avg_volume.index:
