@@ -89,8 +89,7 @@ def download_all_csv_in_folder(service: Resource, folder_id: str) -> dict[str, p
 
 # --- BLOCCO DI ESECUZIONE PRINCIPALE ---
 if __name__ == "__main__":
-    print(">>> Inizio processo di aggiornamento quotidiano dell'ASI (Google Drive)...")
-    print(f"Data e ora corrente: {pd.Timestamp.now(tz='Europe/Paris').strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    print(f">>> Inizio processo di aggiornamento quotidiano dell'ASI (Google Drive) at {pd.Timestamp.now(tz='Europe/Paris').strftime('%Y-%m-%d %H:%M:%S %Z')}...")
 
     if not all([EODHD_API_KEY, GDRIVE_SA_KEY]):
         raise ValueError("Errore: una o più variabili d'ambiente necessarie non sono state impostate.")
@@ -109,4 +108,82 @@ if __name__ == "__main__":
         print(f"Cartella HistFiles trovata: {folder_info.get('name')} (ID: {folder_info.get('id')})")
 
         # Trova l'ID della cartella di produzione
-        root_folder_id = find_id(gdrive_service, name=ROOT
+        root_folder_id = find_id(gdrive_service, name=ROOT_FOLDER_NAME, mime_type='application/vnd.google-apps.folder')
+        if not root_folder_id:
+            raise FileNotFoundError(f"Cartella radice '{ROOT_FOLDER_NAME}' non trovata.")
+        
+        production_folder_id = find_id(
+            gdrive_service,
+            name=PRODUCTION_FOLDER_NAME,
+            parent_id=root_folder_id,
+            mime_type='application/vnd.google-apps.folder'
+        )
+        if not production_folder_id:
+            raise FileNotFoundError(f"Cartella '{PRODUCTION_FOLDER_NAME}' non trovata.")
+        
+        print(f"Cartelle trovate: HistFiles (ID: {HIST_FILES_FOLDER_ID}), Production (ID: {production_folder_id})")
+
+        # Scarica i dati storici dalla cartella HistFiles
+        historical_data_dict = download_all_csv_in_folder(gdrive_service, HIST_FILES_FOLDER_ID)
+        
+        # Aggiorna con i dati giornalieri dall'API
+        tickers_list = list(historical_data_dict.keys())
+        daily_delta_dict = dp.fetch_daily_delta(tickers_list, EODHD_API_KEY)
+
+        if daily_delta_dict:
+            print("Dati incrementali trovati. Eseguo unione nel dizionario...")
+            for ticker, delta_df in daily_delta_dict.items():
+                if ticker in historical_data_dict:
+                    hist_df = historical_data_dict[ticker]
+                    
+                    # Resetta l'indice di entrambi i DataFrame
+                    hist_df_reset = hist_df.reset_index()
+                    delta_df_reset = delta_df.reset_index()
+                    
+                    # Concatena e rimuovi duplicati
+                    combined_df = pd.concat([hist_df_reset, delta_df_reset], ignore_index=True)
+                    combined_df.drop_duplicates(subset=['date'], keep='last', inplace=True)
+                    
+                    # Reimposta l'indice e ordina
+                    combined_df['date'] = pd.to_datetime(combined_df['date'])
+                    combined_df.set_index('date', inplace=True)
+                    combined_df.sort_index(inplace=True)
+                    
+                    historical_data_dict[ticker] = combined_df
+                else:
+                    delta_df.index = pd.to_datetime(delta_df.index)
+                    historical_data_dict[ticker] = delta_df
+            print("Unione nel dizionario completata.")
+        else:
+            print("Nessun nuovo dato dall'API.")
+
+        # Prepara il DataFrame completo per i panieri
+        df_list_for_concat = []
+        for ticker, df in historical_data_dict.items():
+            df_copy = df.copy()
+            df_copy['ticker'] = ticker
+            df_list_for_concat.append(df_copy)
+        
+        full_df_for_baskets = pd.concat(df_list_for_concat).reset_index()
+
+        print("Inizio generazione panieri dinamici...")
+        dynamic_baskets = dp.create_dynamic_baskets(full_df_for_baskets)
+        print(f"Generati {len(dynamic_baskets)} panieri.")
+
+        print("Inizio calcolo Altcoin Season Index...")
+        final_asi_df = dp.calculate_full_asi(historical_data_dict, dynamic_baskets)
+        
+        if final_asi_df.empty:
+            print("ATTENZIONE: Il DataFrame finale dell'ASI è VUOTO.")
+        
+        print(f"Calcolo ASI completato. Il DataFrame finale ha {len(final_asi_df)} righe.")
+        
+        # Salva il risultato nella cartella production
+        upload_or_update_parquet(gdrive_service, final_asi_df, PRODUCTION_FILE_NAME, production_folder_id)
+
+        print("\n>>> Processo di aggiornamento quotidiano completato con successo.")
+
+    except Exception as e:
+        print(f"!!! ERRORE CRITICO DURANTE L'ESECUZIONE: {e}")
+        traceback.print_exc()
+        raise
