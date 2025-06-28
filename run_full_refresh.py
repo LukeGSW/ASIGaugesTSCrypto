@@ -50,48 +50,36 @@ def get_all_tickers(api_key: str, exchange_code: str) -> List[str]:
         raise
 
 def fetch_full_history_for_ticker(ticker: str, api_key: str, start_date: str) -> Optional[pd.DataFrame]:
-    """
-    Versione corretta che gestisce correttamente le colonne 'close' e 'adjusted_close'.
-    """
     url = f"https://eodhd.com/api/eod/{ticker}?api_token={api_key}&fmt=json&period=d&from={start_date}"
     try:
         r = requests.get(url, timeout=60)
         r.raise_for_status()
         data = r.json()
-        if not data:
-            return None
+        if not data: return None
         
         df = pd.DataFrame(data)
 
-        # --- SOLUZIONE DEFINITIVA PER LA GESTIONE DELLE COLONNE ---
         final_data = {}
 
         if 'date' in df.columns:
             final_data['date'] = df['date']
-        else:
-            return None # La data è fondamentale
+        else: return None
 
-        # Priorità ad 'adjusted_close'. Se esiste, lo usiamo come 'close'.
         if 'adjusted_close' in df.columns and df['adjusted_close'].notna().any():
             final_data['close'] = df['adjusted_close']
-        # Altrimenti, usiamo 'close' se esiste.
         elif 'close' in df.columns:
             final_data['close'] = df['close']
         else:
-            # Se non ci sono colonne per il prezzo, il dato è inutile.
             print(f"  - Dati per {ticker} non contengono una colonna 'close' valida. Salto.")
             return None
 
-        # Aggiungi il volume se esiste
         if 'volume' in df.columns:
             final_data['volume'] = df['volume']
         else:
             print(f"  - Dati per {ticker} non contengono la colonna 'volume'. Salto.")
             return None
         
-        # Crea il DataFrame finale solo con le colonne necessarie e uniche.
         return pd.DataFrame(final_data)
-        # --- FINE SOLUZIONE ---
 
     except requests.exceptions.RequestException as e:
         print(f"  - ERRORE API durante il download di {ticker}: {e}")
@@ -105,18 +93,14 @@ if __name__ == "__main__":
         gdrive_service = get_gdrive_service(GDRIVE_SA_KEY)
         
         root_folder_id = find_id(gdrive_service, name=ROOT_FOLDER_NAME, mime_type='application/vnd.google-apps.folder')
-        if not root_folder_id: raise FileNotFoundError(f"'{ROOT_FOLDER_NAME}' non trovata.")
-
         raw_history_folder_id = find_id(gdrive_service, name=RAW_HISTORY_FOLDER_NAME, parent_id=root_folder_id, mime_type='application/vnd.google-apps.folder')
-        if not raw_history_folder_id: raise FileNotFoundError(f"'{RAW_HISTORY_FOLDER_NAME}' non trovata.")
 
         all_tickers = get_all_tickers(EODHD_API_KEY, CRYPTO_EXCHANGE_CODE)
-        total_tickers = len(all_tickers)
         
-        print(f"\nInizio download e salvataggio di {total_tickers} file storici (dal {START_DATE})...")
+        print(f"\nInizio download e salvataggio di {len(all_tickers)} file storici (dal {START_DATE})...")
         for i, ticker in enumerate(all_tickers):
             try:
-                print(f"Processo {i+1}/{total_tickers}: {ticker}")
+                print(f"Processo {i+1}/{len(all_tickers)}: {ticker}")
                 history_df = fetch_full_history_for_ticker(ticker, EODHD_API_KEY, START_DATE)
                 
                 if history_df is not None and not history_df.empty:
@@ -127,7 +111,6 @@ if __name__ == "__main__":
             except Exception as e_inner:
                 print(f"!!! FALLIMENTO per {ticker}: {e_inner}. Continuo col prossimo.")
                 continue
-            
             time.sleep(0.2) 
 
         print("\n>>> Processo di REFRESH COMPLETO terminato.")
