@@ -1,5 +1,3 @@
-# data_processing.py (VERSIONE FINALE E CORRETTA)
-
 import pandas as pd
 import requests
 import numpy as np
@@ -23,41 +21,58 @@ def fetch_daily_delta(tickers: List[str], api_key: str) -> Optional[Dict[str, pd
                 df = pd.DataFrame(data)
                 
                 final_data = {}
-                if 'date' not in df.columns: continue
+                if 'date' not in df.columns:
+                    print(f"  - Nessuna colonna 'date' per {ticker}. Salto.")
+                    continue
+                
                 final_data['date'] = df['date']
                 
                 if 'adjusted_close' in df.columns and df['adjusted_close'].notna().any():
                     final_data['close'] = df['adjusted_close']
                 elif 'close' in df.columns:
                     final_data['close'] = df['close']
-                else: continue
+                else:
+                    print(f"  - Nessuna colonna 'close' valida per {ticker}. Salto.")
+                    continue
 
                 if 'volume' in df.columns:
                     final_data['volume'] = df['volume']
-                else: continue
+                else:
+                    print(f"  - Nessuna colonna 'volume' per {ticker}. Salto.")
+                    continue
                 
                 final_df = pd.DataFrame(final_data)
                 final_df.dropna(inplace=True)
 
                 if not final_df.empty:
-                    final_df['date'] = pd.to_datetime(final_df['date'])
+                    final_df['date'] = pd.to_datetime(final_df['date'], utc=False)
                     final_df.set_index('date', inplace=True)
                     delta_dict[ticker] = final_df[['close', 'volume']]
+                else:
+                    print(f"  - Dati vuoti dopo pulizia per {ticker}. Salto.")
 
-        except requests.exceptions.RequestException:
+        except requests.exceptions.RequestException as e:
+            print(f"  - Errore API per {ticker}: {e}")
             continue
         time.sleep(0.1)
 
     return delta_dict if delta_dict else None
 
 def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int = 30, rebalancing_freq: str = '90D', performance_window: int = 90) -> Dict:
-    if df.empty: return {}
+    if df.empty:
+        print("DataFrame vuoto. Nessun paniere generato.")
+        return {}
         
-    df['date'] = pd.to_datetime(df['date'])
+    # Converti le date in tz-naive
+    df['date'] = pd.to_datetime(df['date'], utc=False)
     df['volume'] = pd.to_numeric(df['volume'], errors='coerce').fillna(0)
     
-    start_date = pd.to_datetime('2018-01-01')
+    start_date = pd.to_datetime('2018-01-01', utc=False)
     end_date = df['date'].max()
+    if end_date.tz is not None:
+        end_date = end_date.tz_localize(None)
+    
+    print(f"Creazione panieri dinamici da {start_date} a {end_date}...")
     rebalancing_dates = pd.date_range(start=start_date, end=end_date, freq=rebalancing_freq)
     
     baskets = {}
@@ -69,7 +84,9 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
         mask = (df['date'] > lookback_start) & (df['date'] <= reb_date)
         volume_period_df = df.loc[mask]
         
-        if volume_period_df.empty: continue
+        if volume_period_df.empty:
+            print(f"Nessun dato per il periodo {lookback_start} - {reb_date}. Salto.")
+            continue
             
         avg_volume = volume_period_df.groupby('ticker')['volume'].mean()
         
@@ -84,16 +101,21 @@ def create_dynamic_baskets(df: pd.DataFrame, top_n: int = 50, lookback_days: int
         
         if final_basket_coins:
             baskets[reb_date] = final_basket_coins
+        else:
+            print(f"Nessun paniere generato per {reb_date}.")
                 
     return baskets
 
 def calculate_full_asi(data_dict: Dict[str, pd.DataFrame], baskets: Dict, performance_window: int = 90) -> pd.DataFrame:
-    if not data_dict or not baskets: return pd.DataFrame()
+    if not data_dict or not baskets:
+        print("Dati o panieri vuoti. Restituisco DataFrame vuoto.")
+        return pd.DataFrame()
 
     btc_ticker = next((t for t in data_dict.keys() if 'BTC-USD.CC' in t), None)
-    if not btc_ticker or btc_ticker not in data_dict: raise ValueError("Dati di Bitcoin non trovati.")
+    if not btc_ticker or btc_ticker not in data_dict:
+        raise ValueError("Dati di Bitcoin non trovati.")
     
-    all_dates = pd.to_datetime(sorted(list(set(date for df in data_dict.values() for date in df.index))))
+    all_dates = pd.to_datetime(sorted(list(set(date for df in data_dict.values() for date in df.index))), utc=False)
     rebalancing_dates = sorted(baskets.keys())
     
     perf_dict = {ticker: df['close'].pct_change(periods=performance_window) for ticker, df in data_dict.items()}
@@ -105,12 +127,14 @@ def calculate_full_asi(data_dict: Dict[str, pd.DataFrame], baskets: Dict, perfor
     
     for eval_date in all_dates[all_dates >= start_eval_date]:
         active_basket_date = next((rd for rd in reversed(rebalancing_dates) if rd <= eval_date), None)
-        if not active_basket_date: continue
+        if not active_basket_date:
+            continue
             
         active_basket = baskets.get(active_basket_date, [])
         current_btc_perf = perf_dict[btc_ticker].get(eval_date)
         
-        if pd.isna(current_btc_perf): continue
+        if pd.isna(current_btc_perf):
+            continue
 
         outperforming_count = 0
         valid_alts_in_basket = 0
@@ -130,7 +154,8 @@ def calculate_full_asi(data_dict: Dict[str, pd.DataFrame], baskets: Dict, perfor
                 'basket_size': valid_alts_in_basket
             })
 
-    if not asi_results: 
+    if not asi_results:
+        print("Nessun risultato ASI generato.")
         return pd.DataFrame(columns=['index_value', 'outperforming_count', 'basket_size'])
         
     return pd.DataFrame(asi_results).set_index('date')
