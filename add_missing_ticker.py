@@ -1,4 +1,4 @@
-# add_missing_ticker.py (VERSIONE CORRETTA E DEFINITIVA)
+# add_missing_ticker.py (VERSIONE CORRETTA E MIRATA)
 
 import os
 import pandas as pd
@@ -15,15 +15,12 @@ ROOT_FOLDER_NAME = "KriterionQuant_Data"
 RAW_HISTORY_FOLDER_NAME = "raw-history"
 START_DATE = "2018-01-01"
 
-# --- LISTA DEI TICKER DA FORZARE ---
+# --- TICKER DA FORZARE ---
 TICKERS_TO_FIX = [
     "BTC-USD.CC"
 ]
 
 def fetch_history_for_ticker(ticker: str, api_key: str, start_date: str) -> Optional[pd.DataFrame]:
-    """
-    Versione di download robusta che gestisce correttamente le colonne 'close' e 'adjusted_close'.
-    """
     url = f"https://eodhd.com/api/eod/{ticker}?api_token={api_key}&fmt=json&period=d&from={start_date}"
     print(f"Tentativo di download per {ticker}...")
     try:
@@ -38,7 +35,6 @@ def fetch_history_for_ticker(ticker: str, api_key: str, start_date: str) -> Opti
 
         final_data = {}
         if 'date' not in df.columns: return None
-
         final_data['date'] = df['date']
         
         if 'adjusted_close' in df.columns and df['adjusted_close'].notna().any():
