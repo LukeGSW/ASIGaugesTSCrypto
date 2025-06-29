@@ -15,19 +15,34 @@ def create_dynamic_baskets(df, top_n=50, lookback_days=30, rebalancing_freq='90D
         rebalancing_freq: Frequenza di ribilanciamento dei panieri (es. '90D' per 90 giorni)
     """
     logger.info(f"Parametri panieri: top_n={top_n}, lookback_days={lookback_days}, rebalancing_freq={rebalancing_freq}")
-    baskets = {}
-    dates = pd.date_range(start='2018-01-01', end='2025-06-27', freq='D')  # Allinea alla data finale del notebook
-    rebalance_dates = pd.date_range(start='2018-01-01', end='2025-06-27', freq=rebalancing_freq)
+    
+    # Verifica che l'indice sia un DatetimeIndex
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise ValueError("L'indice del DataFrame deve essere un DatetimeIndex")
+    
+    # Definisci il range delle date basato sui dati disponibili
+    start_date = df.index.min()
+    end_date = df.index.max()
+    dates = pd.date_range(start=max(start_date, pd.Timestamp('2018-05-01')), 
+                          end=min(end_date, pd.Timestamp('2025-06-27')), 
+                          freq='D')
+    rebalance_dates = pd.date_range(start=dates.min(), end=dates.max(), freq=rebalancing_freq)
 
+    baskets = {}
     for rebalance_date in rebalance_dates:
         lookback_end = rebalance_date - timedelta(days=1)
         lookback_start = lookback_end - timedelta(days=lookback_days)
-        if lookback_start < pd.Timestamp('2018-01-01'):
-            lookback_start = pd.Timestamp('2018-01-01')
+        
+        # Assicurati che le date siano nell'intervallo del DataFrame
+        if lookback_start < df.index.min():
+            lookback_start = df.index.min()
+        if lookback_end > df.index.max():
+            lookback_end = df.index.max()
         
         # Filtra i dati per la finestra temporale
         window_data = df.loc[lookback_start:lookback_end].copy()
         if window_data.empty:
+            logger.warning(f"Nessun dato disponibile per la finestra {lookback_start} a {lookback_end}")
             continue
         
         # Calcola il volume totale per ticker
@@ -35,7 +50,7 @@ def create_dynamic_baskets(df, top_n=50, lookback_days=30, rebalancing_freq='90D
         top_tickers = volume_by_ticker.nlargest(top_n).index
         
         # Assegna i ticker al paniere per tutte le date fino alla prossima ribilanciamento
-        next_rebalance = rebalance_dates[rebalance_dates.get_loc(rebalance_date) + 1] if rebalance_date != rebalance_dates[-1] else pd.Timestamp('2025-06-27')
+        next_rebalance = rebalance_dates[rebalance_dates.get_loc(rebalance_date) + 1] if rebalance_date != rebalance_dates[-1] else end_date
         dates_in_range = dates[(dates >= rebalance_date) & (dates < next_rebalance)]
         for date in dates_in_range:
             baskets[date.strftime('%Y-%m-%d')] = top_tickers.tolist()
@@ -61,13 +76,14 @@ def calculate_full_asi(historical_data, baskets, performance_window=90):
         
         # Calcola la performance media di Bitcoin su 90 giorni
         btc_data = historical_data['BTC-USD.CC'].loc[date - timedelta(days=performance_window):date]
-        if len(btc_data) < performance_window:
-            btc_perf = 0
-        else:
-            btc_perf = btc_data.pct_change().mean()
+        if len(btc_data) < performance_window or btc_data.isna().all():
+            logger.warning(f"Dati insufficienti per Bitcoin a {date}")
+            continue
+        btc_perf = btc_data.pct_change().mean()
         
         # Calcola la performance media per ogni altcoin nel paniere
         outperforming = 0
+        basket_size = min(len(basket), 50)  # Limita a 50 come nel notebook
         for alt in basket:
             alt_data = historical_data[alt].loc[date - timedelta(days=performance_window):date]
             if len(alt_data) < performance_window or alt_data.isna().all():
@@ -77,7 +93,6 @@ def calculate_full_asi(historical_data, baskets, performance_window=90):
                 outperforming += 1
         
         # Calcola l'ASI
-        basket_size = min(len(basket), 50)  # Limita a 50 come nel notebook
         asi = (outperforming / basket_size) * 100 if basket_size > 0 else 0
         asi_df.loc[date, 'index_value'] = asi
         asi_df.loc[date, 'outperforming_count'] = outperforming
@@ -93,9 +108,28 @@ def calculate_full_asi(historical_data, baskets, performance_window=90):
 
 # Funzione di supporto per il fetch dei dati giornalieri (ipotizzata da run_daily_update.py)
 def fetch_daily_delta(tickers_list, api_key):
-    # Implementazione ipotetica basata sul log
+    """
+    Recupera i dati giornalieri incrementali tramite API EODHD.
+    Parametri:
+        tickers_list: Lista dei ticker da aggiornare
+        api_key: Chiave API per EODHD
+    """
+    import requests
     delta_dict = {}
     for ticker in tickers_list:
-        # Simula il fetch (da sostituire con la vera API call)
-        delta_dict[ticker] = pd.DataFrame()  # Placeholder
+        try:
+            url = f"https://eodhd.com/api/eod/{ticker}?api_token={api_key}&fmt=json&period=d"
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            if data:
+                df = pd.DataFrame(data)
+                df['date'] = pd.to_datetime(df['date'], utc=True).dt.tz_localize(None)
+                df.set_index('date', inplace=True)
+                df = df[['close', 'volume']].dropna()
+                delta_dict[ticker] = df
+            else:
+                logger.warning(f"Nessun dato restituito per {ticker}")
+        except Exception as e:
+            logger.error(f"Errore nel fetch di {ticker}: {e}")
     return delta_dict
