@@ -9,16 +9,24 @@ def create_dynamic_baskets(df, top_n=50, lookback_days=30, rebalancing_freq='90D
     """
     Crea panieri dinamici di altcoin basati sul volume su una finestra temporale.
     Parametri:
-        df: DataFrame con i dati storici (indice temporale, colonne: ticker, close, volume)
+        df: DataFrame con i dati storici (indice temporale o colonna 'date', colonne: ticker, close, volume)
         top_n: Numero di altcoin da includere nei panieri
         lookback_days: Finestra temporale per calcolare il volume
         rebalancing_freq: Frequenza di ribilanciamento dei panieri (es. '90D' per 90 giorni)
     """
     logger.info(f"Parametri panieri: top_n={top_n}, lookback_days={lookback_days}, rebalancing_freq={rebalancing_freq}")
     
-    # Verifica che l'indice sia un DatetimeIndex
+    # Verifica e converti l'indice in DatetimeIndex se necessario
     if not isinstance(df.index, pd.DatetimeIndex):
-        raise ValueError("L'indice del DataFrame deve essere un DatetimeIndex")
+        logger.warning("L'indice non è un DatetimeIndex. Conversione in corso...")
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.set_index('date')
+            logger.info("Indice convertito con successo usando la colonna 'date'")
+        else:
+            raise ValueError("Il DataFrame non ha una colonna 'date' e l'indice non è un DatetimeIndex")
+    
+    logger.info(f"Struttura del DataFrame: {df.index}, colonne: {df.columns.tolist()}")
     
     # Definisci il range delle date basato sui dati disponibili
     start_date = df.index.min()
@@ -46,7 +54,7 @@ def create_dynamic_baskets(df, top_n=50, lookback_days=30, rebalancing_freq='90D
             continue
         
         # Calcola il volume totale per ticker
-        volume_by_ticker = window_data.groupby('ticker')['volume'].sum()
+        volume_by_ticker = window_data.groupby(level='ticker')['volume'].sum() if 'ticker' in window_data.index.names else window_data.groupby('ticker')['volume'].sum()
         top_tickers = volume_by_ticker.nlargest(top_n).index
         
         # Assegna i ticker al paniere per tutte le date fino alla prossima ribilanciamento
