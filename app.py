@@ -44,7 +44,7 @@ data_container = st.empty()
 with data_container.container():
     st.info("Caricamento dati di produzione in corso da Google Drive...")
     asi_df = load_production_asi()
-    logger.info(f"Dati ASI caricati: {asi_df.shape} righe e colonne")
+    logger.info(f"Dati ASI caricati: {asi_df.shape}, ultime righe: {asi_df.tail()}")
 
     # --- INIZIO DELLA PATCH DI SICUREZZA ---
     if asi_df is None or asi_df.empty:
@@ -70,12 +70,12 @@ with data_container.container():
 
 # 2. Esegui i calcoli
 indicators_df = calculate_asi_indicators(asi_df)
-logger.info(f"Indicatori calcolati: {list(indicators_df.columns)}")
+logger.info(f"Indicatori calcolati: {list(indicators_df.columns)}, ultima riga: {indicators_df.iloc[-1]}")
 latest_data = indicators_df.iloc[-1]
 level_ts1, amount_ts1, rule_id_ts1 = get_boost_ts1(latest_data)
 level_ts2, amount_ts2, rule_id_ts2 = get_boost_ts2(latest_data)
 
-# --- LOGGING OPZIONALE DEI VALORI DEI TRADING SYSTEM ---
+# --- LOGGING DEI VALORI DEI TRADING SYSTEM ---
 logger.info(f"Valori per TS1: level={level_ts1}, amount={amount_ts1}, rule={rule_id_ts1}")
 logger.info(f"Valori per TS2: level={level_ts2}, amount={amount_ts2}, rule={rule_id_ts2}")
 
