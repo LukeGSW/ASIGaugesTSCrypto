@@ -1,226 +1,143 @@
-import os
 import pandas as pd
-import traceback
-import requests
-from src.gdrive_service import get_gdrive_service, find_id, upload_or_update_parquet
-import src.data_processing as dp
-from googleapiclient.discovery import Resource
-from googleapiclient.http import MediaIoBaseDownload
-import io
+import logging
+from datetime import timedelta
 
-EODHD_API_KEY = os.getenv("EODHD_API_KEY")
-GDRIVE_SA_KEY = os.getenv("GDRIVE_SA_KEY")
-ROOT_FOLDER_NAME = "KriterionQuant_Data"
-PRODUCTION_FOLDER_NAME = "production"
-PRODUCTION_FILE_NAME = "altcoin_season_index.parquet"
-HIST_FILES_FOLDER_ID = "1_WEblq4NIxkduVaPraiFUd9AniVKV0vJ"  # Replace with actual ID
+# Configura il logging
+logger = logging.getLogger(__name__)
 
-def download_all_csv_in_folder(service: Resource, folder_id: str) -> dict[str, pd.DataFrame]:
-    print(f"Ricerca file CSV nella cartella con ID: {folder_id}...")
-    query = f"'{folder_id}' in parents and mimeType != 'application/vnd.google-apps.folder' and name contains '.csv'"
+def create_dynamic_baskets(df, top_n=50, lookback_days=30, rebalancing_freq='90D'):
+    """
+    Crea panieri dinamici di altcoin basati sul volume su una finestra temporale.
+    Parametri:
+        df: DataFrame con i dati storici (indice temporale o colonna 'date', colonne: ticker, close, volume)
+        top_n: Numero di altcoin da includere nei panieri
+        lookback_days: Finestra temporale per calcolare il volume
+        rebalancing_freq: Frequenza di ribilanciamento dei panieri (es. '90D' per 90 giorni)
+    """
+    logger.info(f"Parametri panieri: top_n={top_n}, lookback_days={lookback_days}, rebalancing_freq={rebalancing_freq}")
     
-    try:
-        request = service.files().list(q=query, spaces='drive', fields='files(id, name)')
-        response = request.execute()
-        files = response.get('files', [])
+    # Verifica e converti l'indice in DatetimeIndex se necessario
+    if not isinstance(df.index, pd.DatetimeIndex):
+        logger.warning("L'indice non è un DatetimeIndex. Conversione in corso...")
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+            df = df.set_index('date')
+            logger.info("Indice convertito con successo usando la colonna 'date'")
+        else:
+            raise ValueError("Il DataFrame non ha una colonna 'date' e l'indice non è un DatetimeIndex")
+    
+    logger.info(f"Struttura del DataFrame: {df.index}, colonne: {df.columns.tolist()}")
+    
+    # Definisci il range delle date basato sui dati disponibili
+    start_date = df.index.min()
+    end_date = df.index.max()
+    dates = pd.date_range(start=max(start_date, pd.Timestamp('2018-05-01')), 
+                          end=min(end_date, pd.Timestamp('2025-06-27')), 
+                          freq='D')
+    rebalance_dates = pd.date_range(start=dates.min(), end=dates.max(), freq=rebalancing_freq)
+
+    baskets = {}
+    for rebalance_date in rebalance_dates:
+        lookback_end = rebalance_date - timedelta(days=1)
+        lookback_start = lookback_end - timedelta(days=lookback_days)
         
-        if not files:
-            raise FileNotFoundError(f"Nessun file CSV trovato nella cartella con ID '{folder_id}'.")
+        # Assicurati che le date siano nell'intervallo del DataFrame
+        if lookback_start < df.index.min():
+            lookback_start = df.index.min()
+        if lookback_end > df.index.max():
+            lookback_end = df.index.max()
         
-        data_dict = {}
-        total_files = len(files)
-        print(f"Trovati {total_files} file CSV. Inizio download...")
+        # Filtra i dati per la finestra temporale
+        window_data = df.loc[lookback_start:lookback_end].copy()
+        if window_data.empty:
+            logger.warning(f"Nessun dato disponibile per la finestra {lookback_start} a {lookback_end}")
+            continue
         
-        for i, file in enumerate(files, 1):
-            try:
-                file_id = file.get('id')
-                file_name = file.get('name')
-                print(f"Download {i}/{total_files}: {file_name}")
-                
-                # Download the file
-                request = service.files().get_media(fileId=file_id)
-                file_buffer = io.BytesIO()
-                downloader = MediaIoBaseDownload(file_buffer, request)
-                done = False
-                while not done:
-                    status, done = downloader.next_chunk()
-                
-                file_buffer.seek(0)
-                df = pd.read_csv(file_buffer)
-                
-                # Verifica e formattazione
-                if 'date' not in df.columns:
-                    print(f"  - Errore: '{file_name}' non ha la colonna 'date'. Salto.")
-                    continue
-                
-                # Converti le date in tz-naive
+        # Calcola il volume totale per ticker
+        volume_by_ticker = window_data.groupby(level='ticker')['volume'].sum() if 'ticker' in window_data.index.names else window_data.groupby('ticker')['volume'].sum()
+        top_tickers = volume_by_ticker.nlargest(top_n).index
+        
+        # Assegna i ticker al paniere per tutte le date fino alla prossima ribilanciamento
+        next_rebalance = rebalance_dates[rebalance_dates.get_loc(rebalance_date) + 1] if rebalance_date != rebalance_dates[-1] else end_date
+        dates_in_range = dates[(dates >= rebalance_date) & (dates < next_rebalance)]
+        for date in dates_in_range:
+            baskets[date.strftime('%Y-%m-%d')] = top_tickers.tolist()
+    
+    logger.info(f"Panieri generati: {len(baskets)} panieri, esempio per 2025-06-27: {baskets.get('2025-06-27')}")
+    return baskets
+
+def calculate_full_asi(historical_data, baskets, performance_window=90):
+    """
+    Calcola l'ASI basato sulla performance delle altcoin rispetto a Bitcoin.
+    Parametri:
+        historical_data: DataFrame con i dati storici (indice temporale, colonne: ticker)
+        baskets: Dizionario dei panieri dinamici
+        performance_window: Finestra temporale per calcolare la performance (in giorni)
+    """
+    logger.info(f"Finestra performance ASI: {performance_window}")
+    asi_df = pd.DataFrame(index=historical_data.index)
+    
+    for date in historical_data.index:
+        basket = baskets.get(date.strftime('%Y-%m-%d'), [])
+        if len(basket) == 0:
+            continue
+        
+        # Calcola la performance media di Bitcoin su 90 giorni
+        btc_data = historical_data['BTC-USD.CC'].loc[date - timedelta(days=performance_window):date]
+        if len(btc_data) < performance_window or btc_data.isna().all():
+            logger.warning(f"Dati insufficienti per Bitcoin a {date}")
+            continue
+        btc_perf = btc_data.pct_change().mean()
+        
+        # Calcola la performance media per ogni altcoin nel paniere
+        outperforming = 0
+        basket_size = min(len(basket), 50)  # Limita a 50 come nel notebook
+        for alt in basket:
+            alt_data = historical_data[alt].loc[date - timedelta(days=performance_window):date]
+            if len(alt_data) < performance_window or alt_data.isna().all():
+                continue
+            alt_perf = alt_data.pct_change().mean()
+            if alt_perf > btc_perf:
+                outperforming += 1
+        
+        # Calcola l'ASI
+        asi = (outperforming / basket_size) * 100 if basket_size > 0 else 0
+        asi_df.loc[date, 'index_value'] = asi
+        asi_df.loc[date, 'outperforming_count'] = outperforming
+        asi_df.loc[date, 'basket_size'] = basket_size
+        
+        logger.info(f"ASI per {date}: {asi:.2f}% ({outperforming}/{basket_size} alts sovraperformanti)")
+    
+    # Verifica il valore finale per confronto con il notebook
+    if '2025-06-27' in asi_df.index:
+        logger.info(f"ASI finale per 2025-06-27: {asi_df.loc['2025-06-27', 'index_value']:.2f}%")
+    
+    return asi_df
+
+# Funzione di supporto per il fetch dei dati giornalieri
+def fetch_daily_delta(tickers_list, api_key):
+    """
+    Recupera i dati giornalieri incrementali tramite API EODHD.
+    Parametri:
+        tickers_list: Lista dei ticker da aggiornare
+        api_key: Chiave API per EODHD
+    """
+    import requests
+    delta_dict = {}
+    for ticker in tickers_list:
+        try:
+            url = f"https://eodhd.com/api/eod/{ticker}?api_token={api_key}&fmt=json&period=d"
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            if data:
+                df = pd.DataFrame(data)
                 df['date'] = pd.to_datetime(df['date'], utc=True).dt.tz_localize(None)
                 df.set_index('date', inplace=True)
-                df = df[['open', 'high', 'low', 'close', 'adjusted_close', 'volume']].dropna(subset=['close', 'volume'])
-                df = df[~df.index.duplicated(keep='last')].sort_index()
-                
-                # Estrai il ticker dal nome del file (es. "BTC-USD.CC.csv" -> "BTC-USD.CC")
-                ticker = file_name.replace('.csv', '')
-                data_dict[ticker] = df
-                
-            except Exception as e:
-                print(f"  - Errore durante il download di '{file_name}': {e}")
-                continue
-        
-        if not data_dict:
-            raise ValueError("Nessun dato valido scaricato dalla cartella con ID '{folder_id}'.")
-        
-        print(f"Dati storici caricati per {len(data_dict)} tickers.")
-        return data_dict
-    
-    except Exception as e:
-        print(f"Errore durante il download dei file CSV: {e}")
-        raise
-
-if __name__ == "__main__":
-    print(f">>> Inizio processo di aggiornamento quotidiano dell'ASI (Google Drive) at {pd.Timestamp.now(tz='Europe/Paris').strftime('%Y-%m-%d %H:%M:%S %Z')}...")
-
-    if not all([EODHD_API_KEY, GDRIVE_SA_KEY]):
-        raise ValueError("Errore: una o più variabili d'ambiente necessarie non sono state impostate.")
-
-    gdrive_service = get_gdrive_service(GDRIVE_SA_KEY)
-    
-    try:
-        print("Ricerca cartelle su Google Drive...")
-        
-        # Verifica l'ID della cartella HistFiles
-        if not HIST_FILES_FOLDER_ID:
-            raise ValueError("Errore: HIST_FILES_FOLDER_ID non specificato. Inserire l'ID della cartella HistFiles.")
-        
-        # Debug: verifica se la cartella HistFiles è accessibile
-        folder_info = gdrive_service.files().get(fileId=HIST_FILES_FOLDER_ID, fields='id, name').execute()
-        print(f"Cartella HistFiles trovata: {folder_info.get('name')} (ID: {folder_info.get('id')})")
-
-        # Trova l'ID della cartella di produzione
-        root_folder_id = find_id(gdrive_service, name=ROOT_FOLDER_NAME, mime_type='application/vnd.google-apps.folder')
-        if not root_folder_id:
-            raise FileNotFoundError(f"Cartella radice '{ROOT_FOLDER_NAME}' non trovata.")
-        
-        production_folder_id = find_id(
-            gdrive_service,
-            name=PRODUCTION_FOLDER_NAME,
-            parent_id=root_folder_id,
-            mime_type='application/vnd.google-apps.folder'
-        )
-        if not production_folder_id:
-            raise FileNotFoundError(f"Cartella '{PRODUCTION_FOLDER_NAME}' non trovata.")
-        
-        print(f"Cartelle trovate: HistFiles (ID: {HIST_FILES_FOLDER_ID}), Production (ID: {production_folder_id})")
-
-        # Scarica i dati storici dalla cartella HistFiles
-        historical_data_dict = download_all_csv_in_folder(gdrive_service, HIST_FILES_FOLDER_ID)
-        
-        # Aggiorna con i dati giornalieri dall'API
-        tickers_list = list(historical_data_dict.keys())
-        daily_delta_dict = dp.fetch_daily_delta(tickers_list, EODHD_API_KEY)
-
-        if daily_delta_dict:
-            print("Dati incrementali trovati. Eseguo unione nel dizionario...")
-            for ticker, delta_df in daily_delta_dict.items():
-                print(f"Unione dati per ticker: {ticker}")
-                try:
-                    if ticker in historical_data_dict:
-                        hist_df = historical_data_dict[ticker]
-                        
-                        # Resetta l'indice di entrambi i DataFrame
-                        hist_df_reset = hist_df.reset_index()
-                        delta_df_reset = delta_df.reset_index()
-                        
-                        # Debug: stampa i tipi di dati delle date
-                        print(f"  - Tipo di dati 'date' per {ticker} (storico): {hist_df_reset['date'].dtype}")
-                        print(f"  - Tipo di dati 'date' per {ticker} (delta): {delta_df_reset['date'].dtype}")
-                        
-                        # Converti entrambe le colonne date in tz-naive
-                        hist_df_reset['date'] = pd.to_datetime(hist_df_reset['date'], utc=True).dt.tz_localize(None)
-                        delta_df_reset['date'] = pd.to_datetime(delta_df_reset['date'], utc=True).dt.tz_localize(None)
-                        
-                        # Concatena e rimuovi duplicati
-                        combined_df = pd.concat([hist_df_reset, delta_df_reset], ignore_index=True)
-                        combined_df.drop_duplicates(subset=['date'], keep='last', inplace=True)
-                        
-                        # Reimposta l'indice e ordina
-                        combined_df['date'] = pd.to_datetime(combined_df['date'], utc=False)
-                        combined_df.set_index('date', inplace=True)
-                        combined_df.sort_index(inplace=True)
-                        
-                        historical_data_dict[ticker] = combined_df
-                    else:
-                        delta_df.index = pd.to_datetime(delta_df.index, utc=True).tz_localize(None)
-                        historical_data_dict[ticker] = delta_df
-                except Exception as e:
-                    print(f"  - Errore durante l'unione per '{ticker}': {e}")
-                    continue
-            print("Unione nel dizionario completata.")
-        else:
-            print("Nessun nuovo dato dall'API.")
-
-        # Controlla se BTC-USD.CC è presente in historical_data_dict
-        btc_ticker = 'BTC-USD.CC'
-        if btc_ticker not in historical_data_dict:
-            print(f"{btc_ticker} non trovato in historical_data_dict. Scarico i dati da EODHD...")
-            try:
-                # Costruisci l'URL per scaricare i dati storici di Bitcoin
-                url = f"https://eodhd.com/api/eod/{btc_ticker}?api_token={EODHD_API_KEY}&fmt=json&period=d"
-                response = requests.get(url, timeout=30)
-                response.raise_for_status()  # Solleva un'eccezione se la richiesta fallisce
-                data = response.json()
-                
-                if data:
-                    # Converte i dati in un DataFrame pandas
-                    df = pd.DataFrame(data)
-                    
-                    # Converti la colonna 'date' in datetime tz-naive
-                    df['date'] = pd.to_datetime(df['date'], utc=True).dt.tz_localize(None)
-                    
-                    # Imposta 'date' come indice
-                    df.set_index('date', inplace=True)
-                    
-                    # Mantieni solo le colonne 'close' e 'volume', come per gli altri ticker
-                    df = df[['close', 'volume']].dropna()
-                    
-                    # Aggiungi i dati al dizionario
-                    historical_data_dict[btc_ticker] = df
-                    print(f"Dati di {btc_ticker} scaricati con successo.")
-                else:
-                    raise ValueError(f"Nessun dato restituito per {btc_ticker}")
-            except Exception as e:
-                print(f"Errore nel download dei dati di {btc_ticker}: {e}")
-                raise  # Interrompi il workflow se il download fallisce
-
-        # Prepara il DataFrame completo per i panieri
-        df_list_for_concat = []
-        for ticker, df in historical_data_dict.items():
-            df_copy = df.copy()
-            df_copy['ticker'] = ticker
-            df_list_for_concat.append(df_copy)
-        
-        full_df_for_baskets = pd.concat(df_list_for_concat).reset_index()
-        full_df_for_baskets['date'] = pd.to_datetime(full_df_for_baskets['date'], utc=True).dt.tz_localize(None)
-        print(f"Tipo di dati 'date' in full_df_for_baskets: {full_df_for_baskets['date'].dtype}")
-
-        print("Inizio generazione panieri dinamici...")
-        dynamic_baskets = dp.create_dynamic_baskets(full_df_for_baskets)
-        print(f"Generati {len(dynamic_baskets)} panieri.")
-
-        print("Inizio calcolo Altcoin Season Index...")
-        final_asi_df = dp.calculate_full_asi(historical_data_dict, dynamic_baskets)
-        
-        if final_asi_df.empty:
-            print("ATTENZIONE: Il DataFrame finale dell'ASI è VUOTO.")
-        
-        print(f"Calcolo ASI completato. Il DataFrame finale ha {len(final_asi_df)} righe.")
-        
-        # Salva il risultato nella cartella production
-        upload_or_update_parquet(gdrive_service, final_asi_df, PRODUCTION_FILE_NAME, production_folder_id)
-
-        print("\n>>> Processo di aggiornamento quotidiano completato con successo.")
-
-    except Exception as e:
-        print(f"!!! ERRORE CRITICO DURANTE L'ESECUZIONE: {e}")
-        traceback.print_exc()
-        raise
+                df = df[['close', 'volume']].dropna()
+                delta_dict[ticker] = df
+            else:
+                logger.warning(f"Nessun dato restituito per {ticker}")
+        except Exception as e:
+            logger.error(f"Errore nel fetch di {ticker}: {e}")
+    return delta_dict
